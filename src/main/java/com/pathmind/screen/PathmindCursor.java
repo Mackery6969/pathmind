@@ -60,7 +60,7 @@ final class PathmindCursor {
         MatrixStackBridge.push(matrices);
         try {
             MatrixStackBridge.translateZ(matrices, 1000.0f);
-            GuiTextureRenderer.drawIcon(context, texture, mouseX - HOTSPOT_X, mouseY - HOTSPOT_Y, SIZE, CURSOR_TINT);
+            GuiTextureRenderer.drawIcon(context, texture, mouseX - HOTSPOT_X, mouseY - HOTSPOT_Y, SIZE, SOURCE_SIZE, CURSOR_TINT);
             DrawContextBridge.flush(context);
         } finally {
             MatrixStackBridge.pop(matrices);

@@ -95,6 +95,9 @@ public class PathmindMarketplaceScreen extends Screen {
     private static final int MAX_CONCURRENT_PREVIEW_GRAPH_REQUESTS = 3;
     private static final HttpClient AVATAR_HTTP_CLIENT = HttpClient.newHttpClient();
 
+    private record AvatarTextureSize(int width, int height) {
+    }
+
     private final Screen parent;
     private final boolean openPublishOnInit;
     private final String preferredPublishPresetName;
@@ -150,6 +153,7 @@ public class PathmindMarketplaceScreen extends Screen {
     private ResourceLocation viewedAuthorAvatarTextureId = null;
     private boolean viewedAuthorAvatarLoading = false;
     private final Map<String, ResourceLocation> authorDirectoryAvatarTextures = new HashMap<>();
+    private final Map<ResourceLocation, AvatarTextureSize> avatarTextureSizes = new HashMap<>();
     private final Set<String> authorDirectoryAvatarLoading = new HashSet<>();
     private final Map<String, PreviewGraphModel> previewGraphCache = new HashMap<>();
     private final Set<String> previewGraphLoading = new HashSet<>();
@@ -415,7 +419,7 @@ public class PathmindMarketplaceScreen extends Screen {
             String displayLabel = TextRenderUtil.trimWithEllipsis(this.font, accountLabel, maxLabelWidth);
             context.drawString(this.font, Component.literal(displayLabel), x + 5,
                 y + (SORT_BUTTON_HEIGHT - this.font.lineHeight) / 2, labelColor);
-            GuiTextureRenderer.drawIcon(
+            drawAvatarTexture(
                 context,
                 avatarTexture,
                 x + buttonWidth - SORT_BUTTON_HEIGHT + 2,
@@ -676,7 +680,7 @@ public class PathmindMarketplaceScreen extends Screen {
         UIStyleHelper.drawBeveledPanel(context, x, y, size, size, UITheme.BACKGROUND_PRIMARY, getAccentColor(), UITheme.PANEL_INNER_BORDER);
         ResourceLocation avatarTexture = getOrRequestAuthorDirectoryAvatarTexture(author);
         if (avatarTexture != null) {
-            GuiTextureRenderer.drawIcon(context, avatarTexture, x + 2, y + 2, size - 4, UITheme.TEXT_HEADER);
+            drawAvatarTexture(context, avatarTexture, x + 2, y + 2, size - 4, UITheme.TEXT_HEADER);
             return;
         }
         String initials = fallback(author.displayName(), "?").trim();
@@ -3428,7 +3432,7 @@ public class PathmindMarketplaceScreen extends Screen {
 
         ResourceLocation avatarTexture = getOrRequestAvatarTexture();
         if (avatarTexture != null) {
-            GuiTextureRenderer.drawIcon(
+            drawAvatarTexture(
                 context,
                 avatarTexture,
                 x + 3,
@@ -3456,7 +3460,7 @@ public class PathmindMarketplaceScreen extends Screen {
         UIStyleHelper.drawBeveledPanel(context, x, y, size, size, UITheme.BACKGROUND_PRIMARY, getAccentColor(), UITheme.PANEL_INNER_BORDER);
         ResourceLocation avatarTexture = getOrRequestViewedAuthorAvatarTexture();
         if (avatarTexture != null) {
-            GuiTextureRenderer.drawIcon(context, avatarTexture, x + 2, y + 2, size - 4, UITheme.TEXT_HEADER);
+            drawAvatarTexture(context, avatarTexture, x + 2, y + 2, size - 4, UITheme.TEXT_HEADER);
             return;
         }
         String initials = fallback(viewedAuthorName, "?").trim();
@@ -3572,10 +3576,22 @@ public class PathmindMarketplaceScreen extends Screen {
         if (this.minecraft == null || image == null) {
             return null;
         }
+        int sourceWidth = Math.max(1, image.getWidth());
+        int sourceHeight = Math.max(1, image.getHeight());
         DynamicTexture texture = TextureCompatibilityBridge.createNativeImageBackedTexture("pathmind_marketplace_avatar", image);
         ResourceLocation id = ResourceLocation.fromNamespaceAndPath("pathmind", "textures/dynamic/marketplace_avatar_" + Integer.toHexString(avatarUrl.hashCode()));
         this.minecraft.getTextureManager().register(id, texture);
+        avatarTextureSizes.put(id, new AvatarTextureSize(sourceWidth, sourceHeight));
         return id;
+    }
+
+    private void drawAvatarTexture(GuiGraphics context, ResourceLocation avatarTexture, int x, int y, int size, int color) {
+        AvatarTextureSize sourceSize = avatarTextureSizes.get(avatarTexture);
+        if (sourceSize == null) {
+            GuiTextureRenderer.drawIcon(context, avatarTexture, x, y, size, color);
+            return;
+        }
+        GuiTextureRenderer.drawIcon(context, avatarTexture, x, y, size, size, sourceSize.width(), sourceSize.height(), color);
     }
 
     private void startToggleLike() {

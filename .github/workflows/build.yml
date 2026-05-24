@@ -43,17 +43,14 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Download Baritone API dependency
-        run: |
-          mkdir -p libs
-          curl -L -o libs/baritone-api-fabric-1.15.0.jar \
-            https://github.com/cabaletta/baritone/releases/download/v1.15.0/baritone-api-fabric-1.15.0.jar
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Unit tests
         run: ./gradlew test
+
+      - name: Verify Fabric and NeoForge run task wiring
+        run: ./gradlew runClient runServer runNeoForgeClient runNeoForgeServer --dry-run
 
   build:
     needs:
@@ -76,43 +73,118 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Download Baritone API dependency
-        run: |
-          mkdir -p libs
-          curl -L -o libs/baritone-api-fabric-1.15.0.jar \
-            https://github.com/cabaletta/baritone/releases/download/v1.15.0/baritone-api-fabric-1.15.0.jar
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build mod jar for Minecraft ${{ matrix.minecraft_version }}
-        run: ./gradlew assemble -Pmc_version=${{ matrix.minecraft_version }}
+      - name: Build Fabric and NeoForge jars for Minecraft ${{ matrix.minecraft_version }}
+        run: ./gradlew clean buildBothLoaders -Pmc_version=${{ matrix.minecraft_version }}
 
-      - name: Pick mod jar for Minecraft ${{ matrix.minecraft_version }}
-        id: jar
+      - name: Collect loader jars for Minecraft ${{ matrix.minecraft_version }}
         shell: bash
         run: |
-          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' \
-            | grep -Ev '(-sources|-javadoc|-dev|-shadow|-all)\.jar$' \
-            | sort \
-            | head -n 1)"
+          set -euo pipefail
 
-          if [ -z "$JAR" ]; then
-            echo "No suitable jar found for Minecraft ${{ matrix.minecraft_version }}."
-            find build/libs -maxdepth 1 -type f | sort || true
+          mkdir -p build/release-candidates
+          mapfile -t jars < <(
+            {
+              find build/libs -maxdepth 1 -type f -name "*+mc${{ matrix.minecraft_version }}-neoforge.jar"
+              find fabric/build/libs -maxdepth 1 -type f -name "*+mc${{ matrix.minecraft_version }}-fabric.jar"
+            } | sort
+          )
+
+          if [ "${#jars[@]}" -ne 2 ]; then
+            echo "Expected one Fabric jar and one NeoForge jar for Minecraft ${{ matrix.minecraft_version }}, found ${#jars[@]}."
+            find build/libs fabric/build/libs -maxdepth 1 -type f -name '*.jar' | sort || true
             exit 1
           fi
 
-          echo "jar_path=$JAR" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=$(basename "$JAR")" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${jars[@]}" | grep -q -- '-fabric\.jar$' || {
+            echo "Fabric jar was not generated."
+            printf '%s\n' "${jars[@]}"
+            exit 1
+          }
+          printf '%s\n' "${jars[@]}" | grep -q -- '-neoforge\.jar$' || {
+            echo "NeoForge jar was not generated."
+            printf '%s\n' "${jars[@]}"
+            exit 1
+          }
 
-      - name: Upload mod jar
+          for jar in "${jars[@]}"; do
+            cp "$jar" build/release-candidates/
+          done
+
+          echo "Collected jars:"
+          find build/release-candidates -maxdepth 1 -type f -name '*.jar' | sort
+
+      - name: Upload loader jars
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.jar.outputs.artifact_name }}
-          path: ${{ steps.jar.outputs.jar_path }}
+          name: pathmind-${{ matrix.minecraft_version }}-loaders
+          path: build/release-candidates/*.jar
           if-no-files-found: error
           retention-days: 90
+
+  publish-prerelease:
+    if: ${{ github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download release jars
+        uses: actions/download-artifact@v4
+        with:
+          path: build/release-assets
+          merge-multiple: true
+
+      - name: Publish rolling prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t jars < <(find build/release-assets -maxdepth 1 -type f -name '*.jar' | sort)
+          if [ "${#jars[@]}" -eq 0 ]; then
+            echo "No release jars were downloaded."
+            exit 1
+          fi
+          if ! printf '%s\n' "${jars[@]}" | grep -q -- '-fabric\.jar$'; then
+            echo "No Fabric release jars were downloaded."
+            printf '%s\n' "${jars[@]}"
+            exit 1
+          fi
+          if ! printf '%s\n' "${jars[@]}" | grep -q -- '-neoforge\.jar$'; then
+            echo "No NeoForge release jars were downloaded."
+            printf '%s\n' "${jars[@]}"
+            exit 1
+          fi
+
+          notes_file="$(mktemp)"
+          {
+            echo "Rolling test-build prerelease for Pathmind."
+            echo
+            echo "Commit: ${GITHUB_SHA}"
+            echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "Artifacts:"
+            for jar in "${jars[@]}"; do
+              echo "- $(basename "$jar")"
+            done
+          } > "$notes_file"
+
+          if gh release view test-builds >/dev/null 2>&1; then
+            gh release delete test-builds --yes --cleanup-tag
+          fi
+
+          gh release create test-builds "${jars[@]}" \
+            --target "${GITHUB_SHA}" \
+            --title "Pathmind test builds" \
+            --notes-file "$notes_file" \
+            --prerelease
 
   notify-discord:
     if: ${{ github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
@@ -160,14 +232,25 @@ jobs:
               | sed 's#^.*/##' \
               | jq -R . \
               | jq -s -r --arg repo "${GITHUB_REPOSITORY}" '
-                  sort_by(capture("\\+mc(?<version>[0-9.]+)\\.jar$").version | split(".") | map(tonumber))
+                  map(
+                    . as $file
+                    | ($file | capture("\\+mc(?<version>[0-9.]+)-(?<loader>fabric|neoforge)\\.jar$")) as $meta
+                    | {
+                        file: $file,
+                        version: $meta.version,
+                        loader: $meta.loader
+                      }
+                  )
+                  | sort_by([(.version | split(".") | map(tonumber)), .loader])
                   | map(
-                      "• `"
-                      + (capture("\\+mc(?<version>[0-9.]+)\\.jar$").version)
-                      + "` - [Download](<https://github.com/"
+                      "- `"
+                      + .version
+                      + "` "
+                      + (if .loader == "fabric" then "Fabric" else "NeoForge" end)
+                      + " - [Download](<https://github.com/"
                       + $repo
                       + "/releases/download/test-builds/"
-                      + .
+                      + .file
                       + ">)"
                     )
                   | join("\n")
@@ -214,50 +297,3 @@ jobs:
             -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD"
-
-  publish-prerelease:
-    if: ${{ github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
-    needs:
-      - build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Download release jars
-        uses: actions/download-artifact@v4
-        with:
-          path: build/release-assets
-          merge-multiple: true
-
-      - name: Publish rolling prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mapfile -t jars < <(find build/release-assets -maxdepth 1 -type f -name '*.jar' | sort)
-          if [ "${#jars[@]}" -eq 0 ]; then
-            echo "No release jars were downloaded."
-            exit 1
-          fi
-
-          notes_file="$(mktemp)"
-          {
-            echo "Rolling test-build prerelease for Pathmind."
-            echo
-            echo "Commit: ${GITHUB_SHA}"
-            echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          } > "$notes_file"
-
-          if gh release view test-builds >/dev/null 2>&1; then
-            gh release delete test-builds --yes --cleanup-tag
-          fi
-
-          gh release create test-builds "${jars[@]}" \
-            --target "${GITHUB_SHA}" \
-            --title "Pathmind test builds" \
-            --notes-file "$notes_file" \
-            --prerelease

@@ -291,6 +291,7 @@ public class NodeGraph {
     private int parameterDropdownFieldHeight = 0;
     private String parameterDropdownQuery = "";
     private final java.util.List<ParameterDropdownOption> parameterDropdownOptions = new java.util.ArrayList<>();
+    private final Map<String, ItemStack> parameterDropdownIconCache = new HashMap<>();
     private Node parameterDropdownSuppressedNode = null;
     private int parameterDropdownSuppressedIndex = -1;
     private String parameterDropdownSuppressedQuery = "";
@@ -12485,12 +12486,28 @@ public class NodeGraph {
             || isEntityStateParameter(node, index)) {
             return ItemStack.EMPTY;
         }
+        String category;
+        if (isBlockParameter(node, index)) {
+            category = "block";
+        } else if (isItemParameter(node, index)) {
+            category = "item";
+        } else if (isEntityParameter(node, index)) {
+            category = "entity";
+        } else {
+            return ItemStack.EMPTY;
+        }
         String fullId = optionValue.contains(":") ? optionValue : "minecraft:" + optionValue;
         ResourceLocation id = ResourceLocation.tryParse(fullId);
         if (id == null) {
             return ItemStack.EMPTY;
         }
-        if (isBlockParameter(node, index)) {
+        return parameterDropdownIconCache.computeIfAbsent(category + "|" + fullId, ignored ->
+            createParameterDropdownIcon(category, id)
+        );
+    }
+
+    private ItemStack createParameterDropdownIcon(String category, ResourceLocation id) {
+        if ("block".equals(category)) {
             var block = BuiltInRegistries.BLOCK.getOptional(id).orElse(null);
             if (block == null) {
                 return ItemStack.EMPTY;
@@ -12501,14 +12518,14 @@ public class NodeGraph {
             }
             return new ItemStack(item);
         }
-        if (isItemParameter(node, index)) {
+        if ("item".equals(category)) {
             Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(null);
             if (item == null || item == Items.AIR) {
                 return ItemStack.EMPTY;
             }
             return new ItemStack(item);
         }
-        if (isEntityParameter(node, index)) {
+        if ("entity".equals(category)) {
             var entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(id).orElse(null);
             if (entityType == null) {
                 return ItemStack.EMPTY;

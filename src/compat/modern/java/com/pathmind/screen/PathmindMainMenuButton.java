@@ -14,6 +14,7 @@ import com.pathmind.util.TextCompatibilityBridge;
  */
 public class PathmindMainMenuButton extends ButtonWidget {
     private static final Identifier ICON_TEXTURE = PathmindMod.id("textures/gui/icons/button_logo.png");
+    private static final int ICON_SOURCE_SIZE = 128;
     private static final int ICON_PADDING = 2;
     private static final int BUTTON_FILL = 0xFF4C4C4C;
     private static final int BUTTON_HOVER = 0xFF5A5A5A;
@@ -54,7 +55,7 @@ public class PathmindMainMenuButton extends ButtonWidget {
         }
         int color = (alphaComponent << 24) | rgb;
 
-        GuiTextureRenderer.drawIcon(context, ICON_TEXTURE, iconX, iconY, iconSize, color);
+        GuiTextureRenderer.drawIcon(context, ICON_TEXTURE, iconX, iconY, iconSize, ICON_SOURCE_SIZE, color);
     }
 
     private void drawButtonBackground(DrawContext context) {

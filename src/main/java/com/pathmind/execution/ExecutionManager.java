@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -90,6 +91,8 @@ public class ExecutionManager {
         final Map<Node, Set<Integer>> joinBarrierInputs;
         final List<Node> graphNodes;
         final List<NodeConnection> graphConnections;
+        private volatile Map<Node, Map<Integer, NodeConnection>> nextConnectionLookup;
+        private volatile Map<Node, List<NodeConnection>> outgoingConnectionLookup;
         final List<Node> functionSourceNodes;
         final List<NodeConnection> functionSourceConnections;
 
@@ -110,6 +113,58 @@ public class ExecutionManager {
             this.graphConnections = Collections.synchronizedList(new ArrayList<>(graphConnections == null ? List.of() : graphConnections));
             this.functionSourceNodes = Collections.synchronizedList(new ArrayList<>(graphNodes == null ? List.of() : graphNodes));
             this.functionSourceConnections = Collections.synchronizedList(new ArrayList<>(graphConnections == null ? List.of() : graphConnections));
+            rebuildConnectionLookups();
+        }
+
+        boolean hasGraphConnections() {
+            return !graphConnections.isEmpty();
+        }
+
+        NodeConnection getNextConnection(Node currentNode, int outputSocket) {
+            if (currentNode == null) {
+                return null;
+            }
+            Map<Integer, NodeConnection> bySocket = nextConnectionLookup.get(currentNode);
+            return bySocket == null ? null : bySocket.get(outputSocket);
+        }
+
+        List<NodeConnection> getOutgoingConnections(Node currentNode) {
+            if (currentNode == null) {
+                return List.of();
+            }
+            List<NodeConnection> matches = outgoingConnectionLookup.get(currentNode);
+            return matches == null ? List.of() : matches;
+        }
+
+        void rebuildConnectionLookups() {
+            List<NodeConnection> snapshot;
+            synchronized (graphConnections) {
+                snapshot = new ArrayList<>(graphConnections);
+            }
+
+            Map<Node, Map<Integer, NodeConnection>> nextLookup = new IdentityHashMap<>();
+            Map<Node, List<NodeConnection>> outgoingLookup = new IdentityHashMap<>();
+            for (NodeConnection connection : snapshot) {
+                if (connection == null || connection.getOutputNode() == null) {
+                    continue;
+                }
+                Node outputNode = connection.getOutputNode();
+                outgoingLookup.computeIfAbsent(outputNode, ignored -> new ArrayList<>()).add(connection);
+                nextLookup.computeIfAbsent(outputNode, ignored -> new HashMap<>())
+                    .putIfAbsent(connection.getOutputSocket(), connection);
+            }
+
+            for (Map.Entry<Node, Map<Integer, NodeConnection>> entry : nextLookup.entrySet()) {
+                entry.setValue(Collections.unmodifiableMap(entry.getValue()));
+            }
+            for (Map.Entry<Node, List<NodeConnection>> entry : outgoingLookup.entrySet()) {
+                List<NodeConnection> matches = entry.getValue();
+                matches.sort((left, right) -> Integer.compare(left.getOutputSocket(), right.getOutputSocket()));
+                entry.setValue(List.copyOf(matches));
+            }
+
+            this.nextConnectionLookup = Collections.unmodifiableMap(nextLookup);
+            this.outgoingConnectionLookup = Collections.unmodifiableMap(outgoingLookup);
         }
     }
 
@@ -1808,12 +1863,7 @@ public class ExecutionManager {
 
     private CompletableFuture<Void> continueFromOutputSocket(Node currentNode, ChainController controller, int executionId,
                                                              Node repeatUntilGuard, int outputSocket) {
-        List<NodeConnection> graphConnections = controller != null
-            && controller.graphConnections != null
-            && !controller.graphConnections.isEmpty()
-            ? snapshotList(controller.graphConnections)
-            : activeConnections;
-        NodeConnection nextConnection = getNextConnectedConnection(currentNode, graphConnections, outputSocket);
+        NodeConnection nextConnection = getNextConnectedConnection(currentNode, controller, outputSocket);
         if (nextConnection == null) {
             return CompletableFuture.completedFuture(null);
         }
@@ -1821,12 +1871,7 @@ public class ExecutionManager {
     }
 
     private CompletableFuture<Void> continueFork(Node currentNode, ChainController controller, int executionId, Node repeatUntilGuard) {
-        List<NodeConnection> graphConnections = controller != null
-            && controller.graphConnections != null
-            && !controller.graphConnections.isEmpty()
-            ? snapshotList(controller.graphConnections)
-            : activeConnections;
-        List<NodeConnection> branchConnections = getOutgoingConnections(currentNode, graphConnections);
+        List<NodeConnection> branchConnections = getOutgoingConnections(currentNode, controller);
         if (branchConnections.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
@@ -2265,9 +2310,19 @@ public class ExecutionManager {
         return trimmed.toLowerCase(Locale.ROOT);
     }
 
+    private NodeConnection getNextConnectedConnection(Node currentNode, ChainController controller, int outputSocket) {
+        if (controller != null && controller.hasGraphConnections()) {
+            return controller.getNextConnection(currentNode, outputSocket);
+        }
+        return getNextConnectedConnection(currentNode, activeConnections, outputSocket);
+    }
+
     private NodeConnection getNextConnectedConnection(Node currentNode, List<NodeConnection> connections, int outputSocket) {
         // Use branch-local object identity when traversing to avoid cross-graph collisions when
         // multiple loaded presets contain the same persisted node IDs.
+        if (currentNode == null || connections == null || connections.isEmpty()) {
+            return null;
+        }
         for (NodeConnection connection : connections) {
             if (connection.getOutputNode() == currentNode) {
                 if (connection.getOutputSocket() == outputSocket) {
@@ -2276,6 +2331,13 @@ public class ExecutionManager {
             }
         }
         return null;
+    }
+
+    private List<NodeConnection> getOutgoingConnections(Node currentNode, ChainController controller) {
+        if (controller != null && controller.hasGraphConnections()) {
+            return controller.getOutgoingConnections(currentNode);
+        }
+        return getOutgoingConnections(currentNode, activeConnections);
     }
 
     private List<NodeConnection> getOutgoingConnections(Node currentNode, List<NodeConnection> connections) {
@@ -2436,6 +2498,7 @@ public class ExecutionManager {
         if (controller == null) {
             return;
         }
+        boolean connectionsChanged = false;
         if (branchNodes != null && !branchNodes.isEmpty()) {
             synchronized (controller.graphNodes) {
                 LinkedHashSet<Node> mergedNodes = new LinkedHashSet<>(controller.graphNodes);
@@ -2451,6 +2514,10 @@ public class ExecutionManager {
                 controller.graphConnections.clear();
                 controller.graphConnections.addAll(mergedConnections);
             }
+            connectionsChanged = true;
+        }
+        if (connectionsChanged) {
+            controller.rebuildConnectionLookups();
         }
     }
 
@@ -2458,15 +2525,20 @@ public class ExecutionManager {
         if (controller == null) {
             return;
         }
+        boolean connectionsChanged = false;
         if (branchConnections != null && !branchConnections.isEmpty()) {
             synchronized (controller.graphConnections) {
                 controller.graphConnections.removeAll(branchConnections);
             }
+            connectionsChanged = true;
         }
         if (branchNodes != null && !branchNodes.isEmpty()) {
             synchronized (controller.graphNodes) {
                 controller.graphNodes.removeAll(branchNodes);
             }
+        }
+        if (connectionsChanged) {
+            controller.rebuildConnectionLookups();
         }
     }
 
