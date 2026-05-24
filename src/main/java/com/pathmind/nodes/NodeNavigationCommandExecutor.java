@@ -736,7 +736,7 @@ final class NodeNavigationCommandExecutor {
             return null;
         }
 
-        Block targetBlock = BuiltInRegistries.BLOCK.get(identifier);
+        Block targetBlock = BuiltInRegistries.BLOCK.getOptional(identifier).orElse(null);
         List<BlockSelection> selections = new ArrayList<>();
         BlockSelection.parse(blockId).ifPresent(selections::add);
         Optional<BlockPos> nearest = findNearestBlock(client, selections, Node.PARAMETER_SEARCH_RADIUS);
@@ -812,7 +812,7 @@ final class NodeNavigationCommandExecutor {
             if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item candidateItem = BuiltInRegistries.ITEM.get(identifier);
+            Item candidateItem = BuiltInRegistries.ITEM.getOptional(identifier).orElse(null);
             Optional<BlockPos> target = findNearestDroppedItem(client, candidateItem, searchRange);
             if (target.isPresent()) {
                 matchedPosition = target;
@@ -866,7 +866,7 @@ final class NodeNavigationCommandExecutor {
             if (identifier == null || !BuiltInRegistries.ENTITY_TYPE.containsKey(identifier)) {
                 continue;
             }
-            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.get(identifier);
+            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(identifier).orElse(null);
             Optional<Entity> target = findNearestEntity(client, entityType, range, state);
             if (target.isEmpty()) {
                 continue;
@@ -975,7 +975,7 @@ final class NodeNavigationCommandExecutor {
                 return true;
             }
 
-            targetBlock = BuiltInRegistries.BLOCK.get(identifier);
+            targetBlock = BuiltInRegistries.BLOCK.getOptional(identifier).orElse(null);
             if (targetPos == null) {
                 List<BlockSelection> selections = new ArrayList<>();
                 BlockSelection.parse(blockId).ifPresent(selections::add);

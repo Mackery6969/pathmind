@@ -2,8 +2,9 @@
 
 # Pathmind
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-00AA00?style=for-the-badge&logo=minecraft)](https://minecraft.net)
-[![NeoForge](https://img.shields.io/badge/NeoForge-21.1%2B-FF6B00?style=for-the-badge)](https://neoforged.net)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.21--1.21.11-00AA00?style=for-the-badge&logo=minecraft)](https://minecraft.net)
+[![Fabric](https://img.shields.io/badge/Fabric-0.17.2%2B-DBD0B4?style=for-the-badge)](https://fabricmc.net/)
+[![NeoForge](https://img.shields.io/badge/NeoForge-extra%20target-FF6B00?style=for-the-badge)](https://neoforged.net)
 [![Java](https://img.shields.io/badge/Java-21+-FF6B6B?style=for-the-badge&logo=openjdk)](https://openjdk.java.net)
 [![License](https://img.shields.io/badge/License-See%20LICENSE-lightgrey?style=for-the-badge)](LICENSE.txt)
 
@@ -11,7 +12,7 @@ A visual node editor for building Minecraft automation workflows.
 
 Created by `soymods`.
 
-🇺🇸 English · 🇩🇪 Deutsch · 🇪🇸 Español · 🇫🇷 Français · 🇵🇱 Polski · 🇧🇷 Português (BR) · 🇷🇺 Русский
+English | Deutsch | Espanol | Francais | Polski | Portugues (BR) | Russian
 
 ### Download On Modrinth
 
@@ -84,8 +85,10 @@ Pathmind also adds main-menu integration so the editor is reachable before joini
 
 ### Required
 
-- Minecraft `1.21.1`
-- NeoForge `21.1` or newer
+- Minecraft `1.21` - `1.21.11`
+- Fabric Loader `0.17.2` or newer, or NeoForge for your selected Minecraft version
+- Architectury API matching your Minecraft version and loader
+- Matching Fabric API for Fabric installs
 - Java `21+`
 
 ### Optional
@@ -95,10 +98,11 @@ Pathmind also adds main-menu integration so the editor is reachable before joini
 
 ### Steps
 
-1. Install NeoForge for Minecraft `1.21.1`.
-2. Download the Pathmind NeoForge jar from Modrinth.
-3. Place the jar in your `mods` folder.
-4. Launch the game and open Pathmind with the configured keybind.
+1. Install Fabric or NeoForge for your selected Minecraft version.
+2. Install Architectury API for your loader. Fabric installs also need Fabric API.
+3. Download the matching Pathmind jar from Modrinth.
+4. Place the jar in your `mods` folder.
+5. Launch the game and open Pathmind with the configured keybind.
 
 ## Workspace Files
 
@@ -113,8 +117,9 @@ Imported marketplace presets and exported graphs also flow through this preset s
 
 ## Compatibility
 
-- Release jars are versioned as `pathmind-neoforge-<modVersion>+mc1.21.1-neoforge.jar`.
-- This NeoForge port targets Minecraft `1.21.1`.
+- Fabric is the primary loader target. NeoForge is supported as an additional loader target.
+- Release jars are versioned as `pathmind-fabric-<modVersion>+mc<version>-fabric.jar` and `pathmind-<modVersion>+mc<version>-neoforge.jar`.
+- This port compiles for Minecraft `1.21` through `1.21.11` on Fabric and NeoForge.
 - Multiple language files are included.
 - Marketplace listings include version compatibility metadata.
 
@@ -128,36 +133,81 @@ cd pathmind
 ./gradlew build
 ```
 
-Artifacts are written to `build/libs/`.
+The default build produces both loader jars:
+
+- Fabric: `fabric/build/libs/`
+- NeoForge: `build/libs/`
+
+To build only the primary Fabric jar:
+
+```bash
+./gradlew buildFabric
+```
+
+To build only the NeoForge jar:
+
+```bash
+./gradlew buildNeoForge
+```
+
+To compile for a specific supported Minecraft `1.21.x` target, pass `mc_version`:
+
+```bash
+./gradlew clean build -Pmc_version=1.21.11
+```
+
+On Windows PowerShell, quote the property:
+
+```powershell
+.\gradlew.bat clean build "-Pmc_version=1.21.11"
+```
+
+This also works with single-loader builds:
+
+```bash
+./gradlew :fabric:build -Pmc_version=1.21.11
+```
 
 ### Run In Dev
+
+Fabric is the default development loader:
 
 ```bash
 ./gradlew runClient
 ```
 
-### Build A Specific Minecraft Target
+The explicit Fabric client task is also available:
 
 ```bash
-./gradlew build -Pmc_version="1.21.11"
+./gradlew :fabric:runClient
 ```
 
-Convenience tasks:
+NeoForge dev runs are available as extra targets:
 
-- `./gradlew buildMc1_21_11`
-- `./gradlew buildAllTargets`
+```bash
+./gradlew runNeoForgeClient
+```
 
 ### Supported Build Targets
 
-`1.21.1`
+`1.21` - `1.21.11`
+
+To build every supported Minecraft version for both loaders:
+
+```bash
+./gradlew buildAllTargets
+```
 
 ## Version Information
 
 | Component | Version |
 |-----------|---------|
 | Mod Version | `1.1.4` |
-| Supported Minecraft Versions | `1.21.1` |
-| NeoForge | `21.1+` |
+| Supported Minecraft Versions | `1.21` - `1.21.11` |
+| Fabric Loader | `0.17.2+` |
+| NeoForge | Matching Minecraft version |
+| Fabric API | Matching Minecraft version |
+| Architectury API | Matching Minecraft version and loader |
 | Java | `21+` |
 
 ## Release Readiness
@@ -183,5 +233,5 @@ In short:
 
 ## Acknowledgments
 
-- NeoForge for the modding framework
+- NeoForge, Fabric, and Architectury for the loader/tooling stack
 - Blender and Scratch for helping inspire the node-based workflow direction

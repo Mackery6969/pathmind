@@ -271,7 +271,7 @@ final class NodeCollectCommandExecutor {
             return;
         }
 
-        Direction breakFace = Direction.getNearest(center.x - eyePos.x, center.y - eyePos.y, center.z - eyePos.z);
+        Direction breakFace = com.pathmind.util.DirectionCompatibilityBridge.nearest(center.x - eyePos.x, center.y - eyePos.y, center.z - eyePos.z);
         if (breakFace == null) {
             breakFace = Direction.UP;
         }
@@ -340,7 +340,7 @@ final class NodeCollectCommandExecutor {
         if (identifier == null || !BuiltInRegistries.BLOCK.containsKey(identifier)) {
             return false;
         }
-        Block block = BuiltInRegistries.BLOCK.get(identifier);
+        Block block = BuiltInRegistries.BLOCK.getOptional(identifier).orElse(null);
         Item item = block.asItem();
         if (item == null || item == Items.AIR) {
             return false;

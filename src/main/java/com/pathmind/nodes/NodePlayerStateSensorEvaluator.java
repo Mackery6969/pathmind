@@ -46,7 +46,7 @@ final class NodePlayerStateSensorEvaluator {
 
         AABB box = client.player.getBoundingBox();
         double bottomY = box.minY;
-        double bottomLimit = client.level.getMinBuildHeight() - 1.0;
+        double bottomLimit = com.pathmind.util.LevelCompatibilityBridge.minBuildHeight(client.level) - 1.0;
         double inset = 1.0E-3;
         Vec3[] samplePoints = new Vec3[] {
             new Vec3((box.minX + box.maxX) * 0.5, bottomY + 0.01, (box.minZ + box.maxZ) * 0.5),

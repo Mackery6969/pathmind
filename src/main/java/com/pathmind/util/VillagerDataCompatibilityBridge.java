@@ -13,6 +13,8 @@ import net.minecraft.world.entity.npc.VillagerProfession;
 public final class VillagerDataCompatibilityBridge {
     private static final Method WITH_PROFESSION_ENTRY = resolveMethod("withProfession", Holder.class);
     private static final Method WITH_PROFESSION_VALUE = resolveMethod("withProfession", VillagerProfession.class);
+    private static final Method WITH_LEVEL = resolveMethod("withLevel", int.class);
+    private static final Method SET_LEVEL = resolveMethod("setLevel", int.class);
 
     private VillagerDataCompatibilityBridge() {
     }
@@ -46,6 +48,30 @@ public final class VillagerDataCompatibilityBridge {
 
         // Fallback: return original data
         return data;
+    }
+
+    public static VillagerData withLevel(VillagerData data, int level) {
+        if (data == null) {
+            return null;
+        }
+        VillagerData updated = invokeLevelMethod(WITH_LEVEL, data, level);
+        if (updated != null) {
+            return updated;
+        }
+        updated = invokeLevelMethod(SET_LEVEL, data, level);
+        return updated != null ? updated : data;
+    }
+
+    private static VillagerData invokeLevelMethod(Method method, VillagerData data, int level) {
+        if (method == null) {
+            return null;
+        }
+        try {
+            Object result = method.invoke(data, level);
+            return result instanceof VillagerData villagerData ? villagerData : null;
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return null;
+        }
     }
 
     private static Method resolveMethod(String name, Class<?>... params) {

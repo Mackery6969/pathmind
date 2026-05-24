@@ -12,7 +12,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.npc.VillagerProfession;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.Level;
@@ -164,9 +163,13 @@ public final class EntityStateOptions {
             return null;
         }
         try {
-            java.lang.reflect.Method method = EntityType.class.getMethod("create", Level.class, MobSpawnType.class);
-            MobSpawnType[] reasons = MobSpawnType.values();
-            Object reason = reasons.length > 0 ? reasons[0] : null;
+            Class<?> spawnReasonClass = resolveSpawnReasonClass();
+            if (spawnReasonClass == null) {
+                return null;
+            }
+            java.lang.reflect.Method method = EntityType.class.getMethod("create", Level.class, spawnReasonClass);
+            Object[] reasons = spawnReasonClass.getEnumConstants();
+            Object reason = reasons != null && reasons.length > 0 ? reasons[0] : null;
             if (reason == null) {
                 return null;
             }
@@ -179,6 +182,22 @@ public final class EntityStateOptions {
             Object result = method.invoke(type, world);
             return result instanceof Entity entity ? entity : null;
         } catch (NoSuchMethodException | java.lang.reflect.InvocationTargetException | IllegalAccessException ignored) {
+            return null;
+        }
+    }
+
+    private static Class<?> resolveSpawnReasonClass() {
+        Class<?> spawnReasonClass = resolveClass("net.minecraft.world.entity.MobSpawnType");
+        if (spawnReasonClass != null) {
+            return spawnReasonClass;
+        }
+        return resolveClass("net.minecraft.world.entity.EntitySpawnReason");
+    }
+
+    private static Class<?> resolveClass(String className) {
+        try {
+            return Class.forName(className);
+        } catch (ClassNotFoundException ignored) {
             return null;
         }
     }

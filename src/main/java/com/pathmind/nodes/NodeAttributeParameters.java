@@ -4,6 +4,7 @@ import com.pathmind.util.GuiSelectionMode;
 import java.util.List;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
 
 final class NodeAttributeParameters {
     private NodeAttributeParameters() {
@@ -251,7 +252,8 @@ final class NodeAttributeParameters {
         if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
             return TradeKeyPart.empty();
         }
-        return new TradeKeyPart(BuiltInRegistries.ITEM.get(identifier).getDescription().getString(), count);
+        Item item = BuiltInRegistries.ITEM.getOptional(identifier).orElse(null);
+        return new TradeKeyPart(com.pathmind.util.ItemCompatibilityBridge.displayName(item), count);
     }
 
     private static final class TradeKeyPart {

@@ -1,7 +1,6 @@
 package com.pathmind.util;
 
-import net.neoforged.fml.ModList;
-import net.neoforged.fml.loading.FMLPaths;
+import net.fabricmc.loader.api.FabricLoader;
 
 import java.nio.file.Path;
 import java.util.Optional;
@@ -12,40 +11,37 @@ public final class LoaderInfo {
     }
 
     public static Path getGameDir() {
-        try {
-            return FMLPaths.GAMEDIR.get();
-        } catch (IllegalStateException ignored) {
-            return Path.of(System.getProperty("user.home"), ".minecraft");
-        }
+        return FabricLoader.getInstance().getGameDir();
     }
 
     public static boolean isModLoaded(String modId) {
-        return modId != null && ModList.get().isLoaded(modId);
+        return modId != null && FabricLoader.getInstance().isModLoaded(modId);
     }
 
     public static Optional<String> getModVersion(String modId) {
         if (modId == null) {
             return Optional.empty();
         }
-        return ModList.get().getModContainerById(modId)
-            .map(container -> container.getModInfo().getVersion().toString());
+        return FabricLoader.getInstance()
+            .getModContainer(modId)
+            .map(container -> container.getMetadata().getVersion().getFriendlyString());
     }
 
     public static String getLoaderName() {
-        return "NeoForge";
+        return "Fabric Loader";
     }
 
     public static Optional<String> getLoaderVersion() {
-        return getModVersion("neoforge");
+        return getModVersion("fabricloader");
     }
 
     public static boolean anyLoadedModMatches(BiPredicate<String, String> predicate) {
         if (predicate == null) {
             return false;
         }
-        return ModList.get().getMods().stream().anyMatch(modInfo -> {
-            String id = modInfo.getModId();
-            String name = modInfo.getDisplayName();
+        return FabricLoader.getInstance().getAllMods().stream().anyMatch(container -> {
+            String id = container.getMetadata().getId();
+            String name = container.getMetadata().getName();
             return predicate.test(id, name);
         });
     }

@@ -7,6 +7,7 @@ import com.pathmind.ui.theme.UIStyleHelper;
 import com.pathmind.util.DrawContextBridge;
 import com.pathmind.util.InputCompatibilityBridge;
 import com.pathmind.util.DropdownLayoutHelper;
+import com.pathmind.util.RegistryCompatibilityBridge;
 import com.pathmind.util.TextRenderUtil;
 import com.pathmind.util.VillagerDataCompatibilityBridge;
 import org.lwjgl.glfw.GLFW;
@@ -533,7 +534,7 @@ public class VillagerTradeSelector {
             }
             String display = titleCase(path);
             ResourceKey<VillagerProfession> key = ResourceKey.create(Registries.VILLAGER_PROFESSION, id);
-            Holder<VillagerProfession> entry = BuiltInRegistries.VILLAGER_PROFESSION.getHolder(id).orElse(null);
+            Holder<VillagerProfession> entry = RegistryCompatibilityBridge.villagerProfessionHolder(id);
             if (entry == null) {
                 continue;
             }
@@ -624,7 +625,7 @@ public class VillagerTradeSelector {
             if (data == null) {
                 continue;
             }
-            data = data.setLevel(level);
+            data = VillagerDataCompatibilityBridge.withLevel(data, level);
             villager.setVillagerData(data);
 
             boolean levelHasOffers = false;
@@ -748,7 +749,7 @@ public class VillagerTradeSelector {
             return option.entry.value();
         }
         if (option.key != null) {
-            return BuiltInRegistries.VILLAGER_PROFESSION.get(option.key);
+            return BuiltInRegistries.VILLAGER_PROFESSION.getOptional(option.key).orElse(null);
         }
         return null;
     }

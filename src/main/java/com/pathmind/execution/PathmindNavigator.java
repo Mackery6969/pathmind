@@ -8847,7 +8847,7 @@ public final class PathmindNavigator {
         }
         Vec3 center = Vec3.atCenterOf(target);
         if (hasLineOfSightTo(world, player, target, center)) {
-            Direction fallbackFace = Direction.getNearest(center.x - eyePos.x, center.y - eyePos.y, center.z - eyePos.z).getOpposite();
+            Direction fallbackFace = com.pathmind.util.DirectionCompatibilityBridge.nearest(center.x - eyePos.x, center.y - eyePos.y, center.z - eyePos.z).getOpposite();
             return new BreakTargeting(target.immutable(), fallbackFace, center);
         }
         return null;
@@ -8860,7 +8860,7 @@ public final class PathmindNavigator {
         Vec3 eyePos = player.getEyePosition();
         Vec3 center = Vec3.atCenterOf(target);
         Vec3 delta = center.subtract(eyePos);
-        Direction primary = Direction.getNearest(delta.x, delta.y, delta.z).getOpposite();
+        Direction primary = com.pathmind.util.DirectionCompatibilityBridge.nearest(delta.x, delta.y, delta.z).getOpposite();
         List<Direction> faces = new ArrayList<>(6);
         faces.add(primary);
         for (Direction face : Direction.values()) {

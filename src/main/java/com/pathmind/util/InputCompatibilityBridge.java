@@ -147,12 +147,198 @@ public final class InputCompatibilityBridge {
         return dispatchScreenMouseEvent(screen, SCREEN_MOUSE_RELEASED, x, y, button, false);
     }
 
+    public static boolean mouseClicked(Object target, double x, double y, int button) {
+        return invokeMouseEvent(target, "mouseClicked", x, y, button, true, 0.0D, 0.0D);
+    }
+
+    public static boolean mouseReleased(Object target, double x, double y, int button) {
+        return invokeMouseEvent(target, "mouseReleased", x, y, button, true, 0.0D, 0.0D);
+    }
+
+    public static boolean mouseDragged(Object target, double x, double y, int button, double deltaX, double deltaY) {
+        return invokeMouseEvent(target, "mouseDragged", x, y, button, true, deltaX, deltaY);
+    }
+
+    public static boolean keyPressed(Object target, int keyCode, int scanCode, int modifiers) {
+        if (target == null) {
+            return false;
+        }
+        try {
+            Method legacy = target.getClass().getMethod("keyPressed", int.class, int.class, int.class);
+            Object result = legacy.invoke(target, keyCode, scanCode, modifiers);
+            return result instanceof Boolean value && value;
+        } catch (NoSuchMethodException ignored) {
+            // Try event-based input below.
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+        Object event = createKeyEvent(keyCode, scanCode, modifiers);
+        if (event == null) {
+            return false;
+        }
+        Method method = findMethod(target.getClass(), "keyPressed", event.getClass());
+        if (method == null) {
+            return false;
+        }
+        try {
+            Object result = method.invoke(target, event);
+            return result instanceof Boolean value && value;
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+    }
+
+    public static boolean charTyped(Object target, char chr, int modifiers) {
+        if (target == null) {
+            return false;
+        }
+        try {
+            Method legacy = target.getClass().getMethod("charTyped", char.class, int.class);
+            Object result = legacy.invoke(target, chr, modifiers);
+            return result instanceof Boolean value && value;
+        } catch (NoSuchMethodException ignored) {
+            // Try event-based input below.
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+        Object event = createCharacterEvent(chr, modifiers);
+        if (event == null) {
+            return false;
+        }
+        Method method = findMethod(target.getClass(), "charTyped", event.getClass());
+        if (method == null) {
+            return false;
+        }
+        try {
+            Object result = method.invoke(target, event);
+            return result instanceof Boolean value && value;
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+    }
+
     private static Method resolveScreenMethod(String name) {
         try {
             Method method = Screen.class.getMethod(name);
             method.setAccessible(true);
             return method;
         } catch (NoSuchMethodException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean invokeMouseEvent(Object target, String methodName, double x, double y, int button,
+                                            boolean inBounds, double deltaX, double deltaY) {
+        if (target == null) {
+            return false;
+        }
+        try {
+            Method legacy;
+            if ("mouseDragged".equals(methodName)) {
+                legacy = target.getClass().getMethod(methodName, double.class, double.class, int.class, double.class, double.class);
+                Object result = legacy.invoke(target, x, y, button, deltaX, deltaY);
+                return result instanceof Boolean value && value;
+            }
+            legacy = target.getClass().getMethod(methodName, double.class, double.class, int.class);
+            Object result = legacy.invoke(target, x, y, button);
+            return result instanceof Boolean value && value;
+        } catch (NoSuchMethodException ignored) {
+            // Try event-based input below.
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+
+        Object event = createMouseButtonEvent(x, y, button, 0);
+        if (event == null) {
+            return false;
+        }
+        Method method = findMouseEventMethod(target.getClass(), methodName, event.getClass());
+        if (method == null) {
+            return false;
+        }
+        try {
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            Object result;
+            if (parameterTypes.length == 3) {
+                result = method.invoke(target, event, deltaX, deltaY);
+            } else if (parameterTypes.length == 2) {
+                result = method.invoke(target, event, inBounds);
+            } else {
+                result = method.invoke(target, event);
+            }
+            return result instanceof Boolean value && value;
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            return false;
+        }
+    }
+
+    private static Method findMouseEventMethod(Class<?> targetClass, String methodName, Class<?> eventClass) {
+        for (Method method : targetClass.getMethods()) {
+            if (!method.getName().equals(methodName)) {
+                continue;
+            }
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if (parameterTypes.length == 1 && parameterTypes[0].isAssignableFrom(eventClass)) {
+                return method;
+            }
+            if (parameterTypes.length == 2
+                && parameterTypes[0].isAssignableFrom(eventClass)
+                && parameterTypes[1] == boolean.class) {
+                return method;
+            }
+            if (parameterTypes.length == 3
+                && parameterTypes[0].isAssignableFrom(eventClass)
+                && parameterTypes[1] == double.class
+                && parameterTypes[2] == double.class) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    private static Method findMethod(Class<?> targetClass, String methodName, Class<?> eventClass) {
+        for (Method method : targetClass.getMethods()) {
+            if (method.getName().equals(methodName)
+                && method.getParameterCount() == 1
+                && method.getParameterTypes()[0].isAssignableFrom(eventClass)) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    private static Object createMouseButtonEvent(double x, double y, int button, int modifiers) {
+        try {
+            Class<?> infoClass = Class.forName("net.minecraft.client.input.MouseButtonInfo");
+            Constructor<?> infoConstructor = infoClass.getConstructor(int.class, int.class);
+            Object info = infoConstructor.newInstance(button, modifiers);
+            Class<?> eventClass = Class.forName("net.minecraft.client.input.MouseButtonEvent");
+            Constructor<?> eventConstructor = eventClass.getConstructor(double.class, double.class, infoClass);
+            return eventConstructor.newInstance(x, y, info);
+        } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
+                 | IllegalAccessException | InvocationTargetException ignored) {
+            return null;
+        }
+    }
+
+    private static Object createKeyEvent(int keyCode, int scanCode, int modifiers) {
+        try {
+            Class<?> eventClass = Class.forName("net.minecraft.client.input.KeyEvent");
+            Constructor<?> constructor = eventClass.getConstructor(int.class, int.class, int.class);
+            return constructor.newInstance(keyCode, scanCode, modifiers);
+        } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
+                 | IllegalAccessException | InvocationTargetException ignored) {
+            return null;
+        }
+    }
+
+    private static Object createCharacterEvent(char chr, int modifiers) {
+        try {
+            Class<?> eventClass = Class.forName("net.minecraft.client.input.CharacterEvent");
+            Constructor<?> constructor = eventClass.getConstructor(int.class, int.class);
+            return constructor.newInstance((int) chr, modifiers);
+        } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
+                 | IllegalAccessException | InvocationTargetException ignored) {
             return null;
         }
     }

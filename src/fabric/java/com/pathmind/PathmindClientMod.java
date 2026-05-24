@@ -31,18 +31,27 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.neoforge.client.event.ClientChatEvent;
-import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
-import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
-import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
-import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientBlockEntityEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
+import net.fabricmc.fabric.api.client.networking.v1.C2SConfigurationChannelEvents;
+import net.fabricmc.fabric.api.client.networking.v1.C2SPlayChannelEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.minecraft.world.InteractionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,7 +67,7 @@ import java.util.concurrent.CompletableFuture;
  * This class initializes client-specific features and event handlers.
  */
 @SuppressWarnings({"deprecation", "removal"})
-public class PathmindClientMod {
+public class PathmindClientMod implements ClientModInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger("Pathmind/Client");
     private static final String RECIPE_CACHE_NOTIFICATION_KEY = "recipe_cache_warmup";
     private static final int NAVIGATOR_NOTIFICATION_COLOR = 0xFF66D8FF;
@@ -125,7 +134,8 @@ public class PathmindClientMod {
     private static final String EVT_PLAYER_USE_ENTITY = "fabric.player.use_entity";
     private static final String EVT_PLAYER_USE_ITEM = "fabric.player.use_item";
 
-    public void initialize(IEventBus modBus) {
+    @Override
+    public void onInitializeClient() {
         LOGGER.info("Initializing Pathmind client mod");
 
         PresetManager.initialize();
@@ -135,11 +145,15 @@ public class PathmindClientMod {
         nodeErrorNotificationOverlay = NodeErrorNotificationOverlay.getInstance();
         variablesOverlay = new VariablesOverlay();
 
-        modBus.addListener(this::registerKeyMappings);
+        PathmindKeybinds.registerKeybinds();
+        KeyBindingHelper.registerKeyBinding(PathmindKeybinds.OPEN_VISUAL_EDITOR);
+        KeyBindingHelper.registerKeyBinding(PathmindKeybinds.PLAY_GRAPHS);
+        KeyBindingHelper.registerKeyBinding(PathmindKeybinds.STOP_GRAPHS);
+
         // Hook into the main menu for button and keyboard support
         PathmindMainMenuIntegration.register();
 
-        registerNeoForgeEventForwarders();
+        registerFabricEventForwarders();
         
         LOGGER.info("Pathmind client mod initialized successfully");
     }
@@ -201,138 +215,135 @@ public class PathmindClientMod {
         }
     }
 
-    private void registerKeyMappings(RegisterKeyMappingsEvent event) {
-        PathmindKeybinds.registerKeybinds();
-        event.register(PathmindKeybinds.OPEN_VISUAL_EDITOR);
-        event.register(PathmindKeybinds.PLAY_GRAPHS);
-        event.register(PathmindKeybinds.STOP_GRAPHS);
-    }
+    private void registerFabricEventForwarders() {
+        ClientBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> fireFabricEvent(EVT_CLIENT_BLOCK_ENTITY_LOAD));
+        ClientBlockEntityEvents.BLOCK_ENTITY_UNLOAD.register((blockEntity, world) -> fireFabricEvent(EVT_CLIENT_BLOCK_ENTITY_UNLOAD));
+        ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> fireFabricEvent(EVT_CLIENT_CHUNK_LOAD));
+        ClientChunkEvents.CHUNK_UNLOAD.register((world, chunk) -> fireFabricEvent(EVT_CLIENT_CHUNK_UNLOAD));
+        ClientEntityEvents.ENTITY_LOAD.register((entity, world) -> fireFabricEvent(EVT_CLIENT_ENTITY_LOAD));
+        ClientEntityEvents.ENTITY_UNLOAD.register((entity, world) -> fireFabricEvent(EVT_CLIENT_ENTITY_UNLOAD));
+        ClientLifecycleEvents.CLIENT_STARTED.register(client -> fireFabricEvent(EVT_CLIENT_LIFECYCLE_STARTED));
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            handleClientShutdown("client stopping", true);
+            resetClientState();
+            fireFabricEvent(EVT_CLIENT_LIFECYCLE_STOPPING);
+        });
 
-    private void registerNeoForgeEventForwarders() {
-        IEventBus bus = NeoForge.EVENT_BUS;
-        bus.addListener(this::onClientTickPre);
-        bus.addListener(this::onClientTickPost);
-        bus.addListener(this::onClientLoggingIn);
-        bus.addListener(this::onClientLoggingOut);
-        bus.addListener(this::onClientChatReceived);
-        bus.addListener(this::onClientChat);
-        bus.addListener(this::onRenderGuiPost);
-        bus.addListener(this::onEntityJoinLevel);
-        bus.addListener(this::onEntityLeaveLevel);
-        bus.addListener(this::onLeftClickBlock);
-        bus.addListener(this::onAttackEntity);
-        bus.addListener(this::onRightClickBlock);
-        bus.addListener(this::onEntityInteract);
+        ClientTickEvents.START_CLIENT_TICK.register(client -> fireFabricEvent(EVT_CLIENT_TICK_START));
+        ClientTickEvents.START_WORLD_TICK.register(world -> fireFabricEvent(EVT_CLIENT_WORLD_TICK_START));
+        ClientTickEvents.END_WORLD_TICK.register(world -> fireFabricEvent(EVT_CLIENT_WORLD_TICK_END));
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            handleKeybinds(client);
+            handleRecipeCacheWarmup(client);
+            NavigatorChatSuggestions.getInstance().tick(client);
+            PathmindNavigator.getInstance().tick(client);
+            ServerJoinTracker.tick(client);
+            fireFabricEvent(EVT_CLIENT_TICK_END);
+        });
+
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            worldShutdownHandled = false;
+            ChatMessageTracker.clear();
+            FabricEventTracker.clear();
+            ServerJoinTracker.recordClientJoin(client);
+            if (nodeErrorNotificationOverlay != null) {
+                nodeErrorNotificationOverlay.clear();
+            }
+            Node.resetRecipeCacheWarmup();
+            recipeCacheWarmed = false;
+            recipeCacheWarmupCooldownTicks = 0;
+            fireFabricEvent(EVT_CLIENT_PLAY_JOIN);
+        });
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> handleWorldDisconnect("play disconnect"));
+        ClientPlayConnectionEvents.INIT.register((handler, client) -> fireFabricEvent(EVT_CLIENT_PLAY_INIT));
+
+        C2SConfigurationChannelEvents.REGISTER.register((handler, sender, client, channels) -> fireFabricEvent(EVT_CLIENT_CONFIG_CHANNEL_REGISTER));
+        C2SConfigurationChannelEvents.UNREGISTER.register((handler, sender, client, channels) -> fireFabricEvent(EVT_CLIENT_CONFIG_CHANNEL_UNREGISTER));
+        C2SPlayChannelEvents.REGISTER.register((handler, sender, client, channels) -> fireFabricEvent(EVT_CLIENT_PLAY_CHANNEL_REGISTER));
+        C2SPlayChannelEvents.UNREGISTER.register((handler, sender, client, channels) -> fireFabricEvent(EVT_CLIENT_PLAY_CHANNEL_UNREGISTER));
+        ClientConfigurationConnectionEvents.INIT.register((handler, client) -> fireFabricEvent(EVT_CLIENT_CONFIGURATION_INIT));
+        ClientConfigurationConnectionEvents.START.register((handler, client) -> fireFabricEvent(EVT_CLIENT_CONFIGURATION_START));
+        ClientConfigurationConnectionEvents.COMPLETE.register((handler, client) -> fireFabricEvent(EVT_CLIENT_CONFIGURATION_COMPLETE));
+        ClientConfigurationConnectionEvents.DISCONNECT.register((handler, client) -> fireFabricEvent(EVT_CLIENT_CONFIGURATION_DISCONNECT));
+        ClientLoginConnectionEvents.INIT.register((handler, client) -> fireFabricEvent(EVT_CLIENT_LOGIN_INIT));
+        ClientLoginConnectionEvents.QUERY_START.register((handler, client) -> fireFabricEvent(EVT_CLIENT_LOGIN_QUERY_START));
+        ClientLoginConnectionEvents.DISCONNECT.register((handler, client) -> fireFabricEvent(EVT_CLIENT_LOGIN_DISCONNECT));
+
+        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) -> {
+            if (message != null) {
+                String senderName = sender != null ? com.pathmind.util.GameProfileCompatibilityBridge.getName(sender) : "server";
+                long timestamp = receptionTimestamp != null ? receptionTimestamp.toEpochMilli() : System.currentTimeMillis();
+                ChatMessageTracker.record(senderName, message.getString(), timestamp);
+            }
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_CHAT);
+        });
+        ClientReceiveMessageEvents.ALLOW_CHAT.register((message, signedMessage, sender, params, receptionTimestamp) -> {
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_ALLOW_CHAT);
+            return true;
+        });
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_ALLOW_GAME);
+            return true;
+        });
+        ClientReceiveMessageEvents.MODIFY_GAME.register((message, overlay) -> {
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_MODIFY_GAME);
+            return message;
+        });
+        ClientReceiveMessageEvents.GAME.register((message, overlay) -> fireFabricEvent(EVT_MESSAGE_RECEIVE_GAME));
+        ClientReceiveMessageEvents.CHAT_CANCELED.register((message, signedMessage, sender, params, receptionTimestamp) ->
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_CHAT_CANCELED));
+        ClientReceiveMessageEvents.GAME_CANCELED.register((message, overlay) -> fireFabricEvent(EVT_MESSAGE_RECEIVE_GAME_CANCELED));
+        ServerMessageEvents.CHAT_MESSAGE.register((message, sender, params) -> {
+            fireFabricEvent(EVT_SERVER_MESSAGE_CHAT);
+            fireFabricEvent(EVT_MESSAGE_RECEIVE_CHAT);
+        });
+
+        ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
+            fireFabricEvent(EVT_MESSAGE_SEND_ALLOW_CHAT);
+            if (handlePathmindNavigatorChat(message)) {
+                return false;
+            }
+            return true;
+        });
+        ClientSendMessageEvents.ALLOW_COMMAND.register(command -> {
+            fireFabricEvent(EVT_MESSAGE_SEND_ALLOW_COMMAND);
+            if (handlePathmindNavigatorCommand(command)) {
+                return false;
+            }
+            return true;
+        });
+        ClientSendMessageEvents.CHAT.register(message -> fireFabricEvent(EVT_MESSAGE_SEND_CHAT));
+        ClientSendMessageEvents.COMMAND.register(command -> fireFabricEvent(EVT_MESSAGE_SEND_COMMAND));
+        ClientSendMessageEvents.CHAT_CANCELED.register(message -> fireFabricEvent(EVT_MESSAGE_SEND_CHAT_CANCELED));
+        ClientSendMessageEvents.COMMAND_CANCELED.register(command -> fireFabricEvent(EVT_MESSAGE_SEND_COMMAND_CANCELED));
+        ClientSendMessageEvents.MODIFY_CHAT.register(message -> {
+            fireFabricEvent(EVT_MESSAGE_SEND_MODIFY_CHAT);
+            return message;
+        });
+        ClientSendMessageEvents.MODIFY_COMMAND.register(command -> {
+            fireFabricEvent(EVT_MESSAGE_SEND_MODIFY_COMMAND);
+            return command;
+        });
+
+        HudRenderCallback.EVENT.register((drawContext, tickCounter) -> fireFabricEvent(EVT_RENDER_HUD));
+        AttackBlockCallback.EVENT.register((player, world, hand, pos, direction) -> {
+            fireFabricEvent(EVT_PLAYER_ATTACK_BLOCK);
+            return InteractionResult.PASS;
+        });
+        AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+            fireFabricEvent(EVT_PLAYER_ATTACK_ENTITY);
+            return InteractionResult.PASS;
+        });
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            fireFabricEvent(EVT_PLAYER_USE_BLOCK);
+            return InteractionResult.PASS;
+        });
+        UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
+            fireFabricEvent(EVT_PLAYER_USE_ENTITY);
+            return InteractionResult.PASS;
+        });
         UseItemCallbackCompat.register(this::fireFabricEvent, EVT_PLAYER_USE_ITEM);
     }
-
-    private void onClientTickPre(ClientTickEvent.Pre event) {
-        fireFabricEvent(EVT_CLIENT_TICK_START);
-        if (Minecraft.getInstance().level != null) {
-            fireFabricEvent(EVT_CLIENT_WORLD_TICK_START);
-        }
-    }
-
-    private void onClientTickPost(ClientTickEvent.Post event) {
-        Minecraft client = Minecraft.getInstance();
-        handleKeybinds(client);
-        handleRecipeCacheWarmup(client);
-        NavigatorChatSuggestions.getInstance().tick(client);
-        PathmindNavigator.getInstance().tick(client);
-        ServerJoinTracker.tick(client);
-        fireFabricEvent(EVT_CLIENT_TICK_END);
-        if (client.level != null) {
-            fireFabricEvent(EVT_CLIENT_WORLD_TICK_END);
-        }
-    }
-
-    private void onClientLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
-        Minecraft client = Minecraft.getInstance();
-        worldShutdownHandled = false;
-        ChatMessageTracker.clear();
-        FabricEventTracker.clear();
-        ServerJoinTracker.recordClientJoin(client);
-        if (nodeErrorNotificationOverlay != null) {
-            nodeErrorNotificationOverlay.clear();
-        }
-        Node.resetRecipeCacheWarmup();
-        recipeCacheWarmed = false;
-        recipeCacheWarmupCooldownTicks = 0;
-        fireFabricEvent(EVT_CLIENT_PLAY_JOIN);
-    }
-
-    private void onClientLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
-        handleWorldDisconnect("play disconnect");
-    }
-
-    private void onClientChatReceived(ClientChatReceivedEvent event) {
-        if (event.getMessage() != null) {
-            ChatMessageTracker.record("server", event.getMessage().getString(), System.currentTimeMillis());
-        }
-        fireFabricEvent(EVT_MESSAGE_RECEIVE_CHAT);
-    }
-
-    private void onClientChat(ClientChatEvent event) {
-        String message = event.getMessage();
-        fireFabricEvent(EVT_MESSAGE_SEND_ALLOW_CHAT);
-        if (message != null && message.startsWith("/")) {
-            fireFabricEvent(EVT_MESSAGE_SEND_ALLOW_COMMAND);
-            if (handlePathmindNavigatorCommand(message.substring(1))) {
-                event.setCanceled(true);
-                fireFabricEvent(EVT_MESSAGE_SEND_COMMAND_CANCELED);
-                return;
-            }
-            fireFabricEvent(EVT_MESSAGE_SEND_COMMAND);
-            return;
-        }
-        if (handlePathmindNavigatorChat(message)) {
-            event.setCanceled(true);
-            fireFabricEvent(EVT_MESSAGE_SEND_CHAT_CANCELED);
-            return;
-        }
-        fireFabricEvent(EVT_MESSAGE_SEND_CHAT);
-    }
-
-    private void onRenderGuiPost(RenderGuiEvent.Post event) {
-        fireFabricEvent(EVT_RENDER_HUD);
-    }
-
-    private void onEntityJoinLevel(EntityJoinLevelEvent event) {
-        if (event.getLevel().isClientSide()) {
-            fireFabricEvent(EVT_CLIENT_ENTITY_LOAD);
-        }
-    }
-
-    private void onEntityLeaveLevel(EntityLeaveLevelEvent event) {
-        if (event.getLevel().isClientSide()) {
-            fireFabricEvent(EVT_CLIENT_ENTITY_UNLOAD);
-        }
-    }
-
-    private void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        if (event.getLevel().isClientSide()) {
-            fireFabricEvent(EVT_PLAYER_ATTACK_BLOCK);
-        }
-    }
-
-    private void onAttackEntity(AttackEntityEvent event) {
-        if (event.getEntity().level().isClientSide()) {
-            fireFabricEvent(EVT_PLAYER_ATTACK_ENTITY);
-        }
-    }
-
-    private void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getLevel().isClientSide()) {
-            fireFabricEvent(EVT_PLAYER_USE_BLOCK);
-        }
-    }
-
-    private void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
-        if (event.getLevel().isClientSide()) {
-            fireFabricEvent(EVT_PLAYER_USE_ENTITY);
-        }
-    }
-
     private void handleWorldDisconnect(String reason) {
         handleClientShutdown(reason, false);
         resetClientState();
@@ -916,3 +927,4 @@ public class PathmindClientMod {
     }
 
 }
+

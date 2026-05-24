@@ -110,7 +110,7 @@ final class NodeCraftCommandExecutor {
             return;
         }
 
-        Item targetItem = BuiltInRegistries.ITEM.get(identifier);
+        Item targetItem = BuiltInRegistries.ITEM.getOptional(identifier).orElse(null);
         if (client == null || client.player == null || client.level == null) {
             NodeExecutionCompletion.completeExceptionally(future, new RuntimeException("Minecraft client not available"));
             return;
@@ -124,7 +124,7 @@ final class NodeCraftCommandExecutor {
             return;
         }
 
-        String itemDisplayName = targetItem.getDescription().getString();
+        String itemDisplayName = com.pathmind.util.ItemCompatibilityBridge.displayName(targetItem);
 
         AbstractContainerMenu handler = client.player.containerMenu;
         if (!isCompatibleCraftingHandler(handler, craftMode)) {
@@ -2641,7 +2641,7 @@ final class NodeCraftCommandExecutor {
             if (id == null || !BuiltInRegistries.ITEM.containsKey(id)) {
                 continue;
             }
-            items.add(BuiltInRegistries.ITEM.get(id));
+            items.add(BuiltInRegistries.ITEM.getOptional(id).orElse(null));
         }
         if (items.isEmpty()) {
             return null;
@@ -2962,13 +2962,9 @@ final class NodeCraftCommandExecutor {
             }
         }
         if (client.level != null) {
-            try {
-                RecipeManager manager = client.level.getRecipeManager();
-                if (manager != null && !managers.contains(manager)) {
-                    managers.add(manager);
-                }
-            } catch (RuntimeException ignored) {
-                // Ignore client worlds without a recipe manager.
+            Object manager = com.pathmind.util.LevelCompatibilityBridge.recipeManager(client.level);
+            if (manager != null && !managers.contains(manager)) {
+                managers.add(manager);
             }
         }
         return managers;

@@ -17,7 +17,7 @@ class VersionSupportTest {
     void isSupportedAcceptsKnownVersionsAndNormalization() {
         assertTrue(VersionSupport.isSupported("1.21"));
         assertTrue(VersionSupport.isSupported(" 1.21.11 "));
-        assertTrue(VersionSupport.isSupported("1.21.10"));
+        assertTrue(VersionSupport.isSupported("1.21.4"));
     }
 
     @Test
@@ -25,6 +25,7 @@ class VersionSupportTest {
         assertFalse(VersionSupport.isSupported(null));
         assertFalse(VersionSupport.isSupported(""));
         assertFalse(VersionSupport.isSupported("1.20.6"));
+        assertFalse(VersionSupport.isSupported("1.21.12"));
         assertFalse(VersionSupport.isSupported("2.0"));
     }
 }

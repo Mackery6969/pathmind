@@ -118,7 +118,7 @@ final class NodeEntityActionCommandExecutor {
                 future.complete(null);
                 return;
             }
-            targetBlock = BuiltInRegistries.BLOCK.get(identifier);
+            targetBlock = BuiltInRegistries.BLOCK.getOptional(identifier).orElse(null);
             configuredBlockId = identifier.toString();
             owner.setParameterValueAndPropagate("Block", configuredBlockId);
         }
@@ -147,7 +147,7 @@ final class NodeEntityActionCommandExecutor {
                 return;
             }
 
-            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.get(entityIdentifier);
+            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(entityIdentifier).orElse(null);
             Optional<Entity> nearestEntity = owner.findNearestEntity(client, entityType, Node.PARAMETER_SEARCH_RADIUS);
 
             if (!nearestEntity.isPresent()) {
@@ -247,7 +247,7 @@ final class NodeEntityActionCommandExecutor {
                 return;
             }
 
-            Direction facing = Direction.getNearest(hitVec.x - eyePos.x, hitVec.y - eyePos.y, hitVec.z - eyePos.z);
+            Direction facing = com.pathmind.util.DirectionCompatibilityBridge.nearest(hitVec.x - eyePos.x, hitVec.y - eyePos.y, hitVec.z - eyePos.z);
             BlockHitResult manualHit = new BlockHitResult(hitVec, facing == null ? Direction.UP : facing, targetPos, false);
             target = manualHit;
             result = client.gameMode.useItemOn(client.player, hand, manualHit);
@@ -357,7 +357,7 @@ final class NodeEntityActionCommandExecutor {
 
         if (breakFace == null) {
             Vec3 delta = center.subtract(eyePos);
-            breakFace = Direction.getNearest(delta.x, delta.y, delta.z);
+            breakFace = com.pathmind.util.DirectionCompatibilityBridge.nearest(delta.x, delta.y, delta.z);
             if (breakFace == null) {
                 breakFace = Direction.UP;
             }

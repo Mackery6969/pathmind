@@ -148,7 +148,7 @@ final class NodeAttributeDetectionEvaluator {
             if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item item = BuiltInRegistries.ITEM.get(identifier);
+            Item item = BuiltInRegistries.ITEM.getOptional(identifier).orElse(null);
             Optional<ItemEntity> candidate = findNearestDroppedItemEntity(client, item, range);
             if (candidate.isEmpty()) {
                 continue;

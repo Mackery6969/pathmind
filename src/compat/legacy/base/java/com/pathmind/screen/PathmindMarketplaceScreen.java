@@ -7,6 +7,7 @@ import com.pathmind.data.NodeGraphPersistence;
 import com.pathmind.data.PresetManager;
 import com.pathmind.data.SettingsManager;
 import com.pathmind.marketplace.MarketplaceAuthManager;
+import com.pathmind.marketplace.MarketplaceCompatibility;
 import com.pathmind.marketplace.MarketplacePreset;
 import com.pathmind.marketplace.MarketplaceRateLimitManager;
 import com.pathmind.marketplace.MarketplaceService;
@@ -3621,7 +3622,7 @@ public class PathmindMarketplaceScreen extends Screen {
             publishDescriptionField == null ? "" : publishDescriptionField.getValue().trim(),
             parseTags(publishTagsField == null ? "" : publishTagsField.getValue()),
             this.minecraft != null ? this.minecraft.getLaunchedVersion() : "Unknown",
-            getInstalledPathmindVersion(),
+            getMarketplacePathmindVersion(),
             publishVisibilityPublic
         );
 
@@ -4905,7 +4906,7 @@ public class PathmindMarketplaceScreen extends Screen {
             : "Minecraft: built for " + presetMinecraftVersion + ", you are on " + currentMinecraftVersion;
 
         String presetPathmindVersion = fallback(preset.getPathmindVersion(), "Unknown");
-        boolean pathmindCompatible = isVersionLooseMatch(presetPathmindVersion, currentPathmindVersion)
+        boolean pathmindCompatible = MarketplaceCompatibility.isPathmindVersionCompatible(presetPathmindVersion, currentPathmindVersion)
             || isAnyVersion(presetPathmindVersion)
             || "current".equalsIgnoreCase(presetPathmindVersion);
         String pathmindLine = pathmindCompatible
@@ -4964,6 +4965,12 @@ public class PathmindMarketplaceScreen extends Screen {
 
     private String getInstalledPathmindVersion() {
         return LoaderInfo.getModVersion(PathmindMod.MOD_ID).orElse("Unknown");
+    }
+
+    private String getMarketplacePathmindVersion() {
+        String installedVersion = getInstalledPathmindVersion();
+        String loaderNeutralVersion = MarketplaceCompatibility.toLoaderNeutralPathmindVersion(installedVersion);
+        return loaderNeutralVersion.isBlank() ? installedVersion : loaderNeutralVersion;
     }
 
     private static boolean isPointInRect(int x, int y, int rectX, int rectY, int width, int height) {

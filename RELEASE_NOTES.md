@@ -40,8 +40,10 @@
 
 ## Known Limitations
 
-- Pathmind is a client-side NeoForge mod for Minecraft 1.21.1 and requires NeoForge 21.1+ and Java 21.
+- Pathmind is a client-side mod for Minecraft 1.21 through 1.21.11 on NeoForge or Fabric.
+- Both loader builds require Architectury API; Fabric builds also require the matching Fabric API for the selected Minecraft version.
+- Minecraft 1.21.9 through 1.21.11 use generated compatibility sources for the newer GUI/input event APIs.
 
 ## Supported Minecraft Versions
 
-- `1.21.1`
+- `1.21` - `1.21.11`

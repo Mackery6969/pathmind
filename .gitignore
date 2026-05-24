@@ -2,6 +2,8 @@
 .gradle/
 .gradle-home/
 build/
+fabric/build/
+fabric/.gradle/
 bin/
 run/
 

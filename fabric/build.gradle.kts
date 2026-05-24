@@ -1,62 +1,45 @@
 import org.gradle.api.GradleException
-import org.gradle.api.tasks.TaskProvider
 
 plugins {
-    id("java-library")
+    id("fabric-loom") version "1.14.10"
     id("maven-publish")
-    id("net.neoforged.moddev") version "2.0.141"
-    id("idea")
 }
 
 val modId = providers.gradleProperty("mod_id").get()
 data class MinecraftVersionSpec(
-    val neoVersion: String,
     val fabricApiVersion: String,
     val architecturyApiVersion: String
 )
 
 val supportedMinecraftVersions = linkedMapOf(
-    "1.21" to MinecraftVersionSpec("21.0.167", "0.102.0+1.21", "13.0.8"),
-    "1.21.1" to MinecraftVersionSpec("21.1.230", "0.116.7+1.21.1", "13.0.8"),
-    "1.21.2" to MinecraftVersionSpec("21.2.1-beta", "0.106.1+1.21.2", "14.0.4"),
-    "1.21.3" to MinecraftVersionSpec("21.3.96", "0.114.1+1.21.3", "14.0.4"),
-    "1.21.4" to MinecraftVersionSpec("21.4.157", "0.119.4+1.21.4", "15.0.3"),
-    "1.21.5" to MinecraftVersionSpec("21.5.97", "0.128.2+1.21.5", "16.1.4"),
-    "1.21.6" to MinecraftVersionSpec("21.6.20-beta", "0.128.2+1.21.6", "17.0.8"),
-    "1.21.7" to MinecraftVersionSpec("21.7.25-beta", "0.129.0+1.21.7", "17.0.8"),
-    "1.21.8" to MinecraftVersionSpec("21.8.53", "0.133.4+1.21.8", "18.0.8"),
-    "1.21.9" to MinecraftVersionSpec("21.9.16-beta", "0.134.1+1.21.9", "19.0.1"),
-    "1.21.10" to MinecraftVersionSpec("21.10.64", "0.138.4+1.21.10", "19.0.1"),
-    "1.21.11" to MinecraftVersionSpec("21.11.42", "0.140.2+1.21.11", "19.0.1")
+    "1.21" to MinecraftVersionSpec("0.102.0+1.21", "13.0.8"),
+    "1.21.1" to MinecraftVersionSpec("0.116.7+1.21.1", "13.0.8"),
+    "1.21.2" to MinecraftVersionSpec("0.106.1+1.21.2", "14.0.4"),
+    "1.21.3" to MinecraftVersionSpec("0.114.1+1.21.3", "14.0.4"),
+    "1.21.4" to MinecraftVersionSpec("0.119.4+1.21.4", "15.0.3"),
+    "1.21.5" to MinecraftVersionSpec("0.128.2+1.21.5", "16.1.4"),
+    "1.21.6" to MinecraftVersionSpec("0.128.2+1.21.6", "17.0.8"),
+    "1.21.7" to MinecraftVersionSpec("0.129.0+1.21.7", "17.0.8"),
+    "1.21.8" to MinecraftVersionSpec("0.133.4+1.21.8", "18.0.8"),
+    "1.21.9" to MinecraftVersionSpec("0.134.1+1.21.9", "19.0.1"),
+    "1.21.10" to MinecraftVersionSpec("0.138.4+1.21.10", "19.0.1"),
+    "1.21.11" to MinecraftVersionSpec("0.140.2+1.21.11", "19.0.1")
 )
-val verifiedMinecraftVersions = supportedMinecraftVersions.keys
-
-fun String.toTaskSuffix(): String = replace(".", "_")
 
 val explicitMinecraftVersion = providers.gradleProperty("mc_version").isPresent
 val minecraftVersion = providers.gradleProperty("mc_version")
     .orElse(providers.gradleProperty("minecraft_version"))
     .get()
 val requestedSpec = supportedMinecraftVersions[minecraftVersion]
-    ?: throw GradleException("No build spec configured for Minecraft $minecraftVersion")
-val minecraftVersionRange = if (explicitMinecraftVersion) {
-    "[$minecraftVersion]"
+    ?: throw GradleException("No Fabric build spec configured for Minecraft $minecraftVersion")
+val fabricLoaderVersion = providers.gradleProperty("fabric_loader_version").get()
+val fabricApiVersion = if (explicitMinecraftVersion) {
+    requestedSpec.fabricApiVersion
 } else {
-    providers.gradleProperty("minecraft_version_range").orElse(provider { "[$minecraftVersion]" }).get()
-}
-val neoVersion = if (explicitMinecraftVersion) {
-    requestedSpec.neoVersion
-} else {
-    providers.gradleProperty("neo_version").orElse(provider { requestedSpec.neoVersion }).get()
-}
-val neoVersionRange = if (explicitMinecraftVersion) {
-    "[${neoVersion.substringBeforeLast(".")},)"
-} else {
-    providers.gradleProperty("neo_version_range")
-        .orElse(provider { "[${neoVersion.substringBeforeLast(".")},)" })
+    providers.gradleProperty("fabric_api_version")
+        .orElse(provider { requestedSpec.fabricApiVersion })
         .get()
 }
-val loaderVersionRange = providers.gradleProperty("loader_version_range").get()
 val architecturyApiVersion = if (explicitMinecraftVersion) {
     requestedSpec.architecturyApiVersion
 } else {
@@ -64,10 +47,7 @@ val architecturyApiVersion = if (explicitMinecraftVersion) {
         .orElse(provider { requestedSpec.architecturyApiVersion })
         .get()
 }
-val modLicense = providers.gradleProperty("mod_license").get()
-val modName = providers.gradleProperty("mod_name").get()
-val modAuthors = providers.gradleProperty("mod_authors").get()
-val modDescription = providers.gradleProperty("mod_description").get()
+val modVersion = providers.gradleProperty("mod_version").get()
 val usesGeneratedCompatibilitySources = minecraftVersion in setOf("1.21.9", "1.21.10", "1.21.11")
 val usesRenamedMojangApis = minecraftVersion == "1.21.11"
 val keyMappingCategoryIdFactory = if (usesRenamedMojangApis) {
@@ -111,6 +91,9 @@ val renamedMojangApiReplacements = buildList {
     add("return super.mouseReleased(mouseX, mouseY, button);" to "return super.mouseReleased(click);")
     add("return super.keyPressed(keyCode, scanCode, modifiers);" to "return super.keyPressed(input);")
     add("return super.charTyped(chr, modifiers);" to "return super.charTyped(input);")
+    add("ScreenKeyboardEvents.afterKeyPress(screen).register((currentScreen, keyCode, scanCode, modifiers) -> {" to "ScreenKeyboardEvents.afterKeyPress(screen).register((currentScreen, input) -> {\n            int keyCode = input.key();")
+    add("import net.minecraft.world.InteractionResultHolder;" to "import net.minecraft.world.InteractionResult;")
+    add("InteractionResultHolder.pass(player.getItemInHand(hand))" to "InteractionResult.PASS")
 }
 fun transformRenamedMojangLine(line: String): String {
     var current = renamedMojangApiReplacements.fold(line) { value, replacement ->
@@ -135,27 +118,58 @@ fun transformRenamedMojangLine(line: String): String {
 }
 val renamedMojangSourceDir = layout.buildDirectory.dir("generated/sources/renamedMojang/java")
 val prepareRenamedMojangSources = tasks.register<Sync>("prepareRenamedMojangSources") {
-    inputs.property("pathmindSourceTransform", "neoforge-1.21.9-ui-input-v3-$usesRenamedMojangApis")
-    from("src/main/java")
-    from("src/compat/legacy/base/java")
-    from("src/compat/legacy/useitem/typed/java")
-    from("src/compat/legacy/render/old/java")
+    inputs.property("pathmindSourceTransform", "fabric-1.21.9-ui-input-v3-$usesRenamedMojangApis")
+    from(rootProject.file("src/main/java")) {
+        exclude("com/pathmind/PathmindMod.java")
+        exclude("com/pathmind/PathmindClientMod.java")
+        exclude("com/pathmind/util/LoaderInfo.java")
+        exclude("com/pathmind/util/UseItemCallbackCompat.java")
+        exclude("com/pathmind/mixin/GameRendererMixin.java")
+    }
+    from(rootProject.file("src/compat/legacy/base/java")) {
+        exclude("com/pathmind/screen/PathmindMainMenuIntegration.java")
+    }
+    from(rootProject.file("src/compat/legacy/render/old/java"))
+    from(rootProject.file("src/fabric/java/com/pathmind"))
     include("**/*.java")
     into(renamedMojangSourceDir)
     filteringCharset = "UTF-8"
     filter { line: String -> transformRenamedMojangLine(line) }
 }
 
-version = "${providers.gradleProperty("mod_version").get()}+mc$minecraftVersion-neoforge"
+version = "$modVersion+mc$minecraftVersion-fabric"
 group = providers.gradleProperty("maven_group").get()
 
 base {
-    archivesName.set(providers.gradleProperty("archives_base_name").get())
+    archivesName.set("${providers.gradleProperty("archives_base_name").get()}-fabric")
 }
 
 java {
     withSourcesJar()
     toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+}
+
+loom {
+    accessWidenerPath = rootProject.file("src/main/resources/pathmind.accesswidener")
+}
+
+repositories {
+    mavenCentral()
+    maven("https://maven.fabricmc.net/")
+    maven("https://maven.architectury.dev/")
+}
+
+dependencies {
+    minecraft("com.mojang:minecraft:$minecraftVersion")
+    mappings(loom.officialMojangMappings())
+    modImplementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
+    modImplementation("dev.architectury:architectury-fabric:$architecturyApiVersion")
+
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 sourceSets {
@@ -164,84 +178,40 @@ sourceSets {
             if (usesGeneratedCompatibilitySources) {
                 setSrcDirs(listOf(renamedMojangSourceDir))
             } else {
-                setSrcDirs(listOf("src/main/java"))
-                srcDir("src/compat/legacy/base/java")
-                srcDir("src/compat/legacy/useitem/typed/java")
-                srcDir("src/compat/legacy/render/old/java")
+                setSrcDirs(
+                    listOf(
+                        rootProject.file("src/main/java"),
+                        rootProject.file("src/compat/legacy/base/java"),
+                        rootProject.file("src/compat/legacy/render/old/java"),
+                        rootProject.file("src/fabric/java/com/pathmind")
+                    )
+                )
+                exclude("com/pathmind/PathmindMod.java")
+                exclude("com/pathmind/PathmindClientMod.java")
+                exclude("com/pathmind/util/LoaderInfo.java")
+                exclude("com/pathmind/util/UseItemCallbackCompat.java")
+                exclude("com/pathmind/mixin/GameRendererMixin.java")
+                exclude("com/pathmind/screen/PathmindMainMenuIntegration.java")
             }
         }
         resources {
-            exclude("fabric.mod.json")
-            exclude("pathmind.accesswidener")
+            setSrcDirs(listOf(rootProject.file("src/main/resources")))
+            exclude("META-INF/neoforge.mods.toml")
         }
     }
-}
-
-neoForge {
-    version = neoVersion
-
-    runs {
-        configureEach {
-            gameDirectory.set(layout.projectDirectory.dir("run"))
-            systemProperty("forge.logging.markers", "REGISTRIES")
-            logLevel.set(org.slf4j.event.Level.DEBUG)
-        }
-
-        register("neoForgeClient") {
-            client()
-            systemProperty("neoforge.enabledGameTestNamespaces", modId)
-        }
-
-        register("neoForgeServer") {
-            server()
-            programArgument("--nogui")
-            systemProperty("neoforge.enabledGameTestNamespaces", modId)
-        }
-    }
-
-    mods {
-        register(modId) {
-            sourceSet(sourceSets.main.get())
-        }
-    }
-
-    unitTest {
-        enable()
-        testedMod = mods.named(modId).get()
-    }
-}
-
-repositories {
-    mavenCentral()
-    maven("https://maven.architectury.dev/")
-}
-
-dependencies {
-    implementation("dev.architectury:architectury-neoforge:$architecturyApiVersion")
-    implementation("com.google.code.gson:gson:2.10.1")
-
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.processResources {
     val properties = mapOf(
         "version" to project.version,
         "minecraft_version" to minecraftVersion,
-        "minecraft_version_range" to minecraftVersionRange,
-        "neo_version" to neoVersion,
-        "neo_version_range" to neoVersionRange,
-        "loader_version_range" to loaderVersionRange,
+        "fabric_loader_version" to fabricLoaderVersion,
+        "fabric_api_version" to fabricApiVersion,
         "architectury_api_version" to architecturyApiVersion,
-        "mod_id" to modId,
-        "mod_name" to modName,
-        "mod_license" to modLicense,
-        "mod_authors" to modAuthors,
-        "mod_description" to modDescription
     )
     inputs.properties(properties)
 
-    filesMatching("META-INF/neoforge.mods.toml") {
+    filesMatching("fabric.mod.json") {
         expand(properties)
     }
 }
@@ -257,95 +227,6 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
-}
-
-tasks.register("runClient") {
-    group = "fabric"
-    description = "Runs the Fabric client Minecraft run configuration."
-    dependsOn(":fabric:runClient")
-}
-
-tasks.register("runServer") {
-    group = "fabric"
-    description = "Runs the Fabric server Minecraft run configuration."
-    dependsOn(":fabric:runServer")
-}
-
-tasks.register("buildFabric") {
-    group = "build"
-    description = "Build the Fabric jar with Architectury API support."
-    dependsOn(":fabric:remapJar")
-}
-
-tasks.register("buildNeoForge") {
-    group = "build"
-    description = "Build the NeoForge jar with Architectury API support."
-    dependsOn("assemble", "check")
-}
-
-tasks.named("build") {
-    dependsOn(":fabric:remapJar")
-    doLast {
-        val neoJar = layout.buildDirectory.file("libs/${base.archivesName.get()}-$version.jar").get().asFile
-        val fabricJar = project(":fabric").layout.buildDirectory.file(
-            "libs/${providers.gradleProperty("archives_base_name").get()}-fabric-${project(":fabric").version}.jar"
-        ).get().asFile
-        println("Built NeoForge jar: ${neoJar.relativeTo(rootProject.projectDir)}")
-        println("Built Fabric jar: ${fabricJar.relativeTo(rootProject.projectDir)}")
-    }
-}
-
-tasks.register("buildBothLoaders") {
-    group = "build"
-    description = "Build both NeoForge and Fabric jars."
-    dependsOn(tasks.named("build"))
-}
-
-val cleanTask = tasks.named("clean")
-val multiVersionBuildTasks = mutableListOf<TaskProvider<out Task>>()
-var previousMultiVersionBuildTask: TaskProvider<out Task>? = null
-verifiedMinecraftVersions.forEach { targetVersion ->
-    val taskName = "buildMc${targetVersion.toTaskSuffix()}"
-    val previousTask = previousMultiVersionBuildTask
-    val provider = tasks.register<Exec>(taskName) {
-        group = "build"
-        description = "Build Pathmind for Minecraft $targetVersion on NeoForge and Fabric."
-        val versionOutputDir = layout.buildDirectory.dir("multiVersion/$targetVersion")
-        outputs.dir(versionOutputDir)
-        workingDir = projectDir
-        if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
-            commandLine("cmd", "/c", "gradlew.bat", "clean", "build", "-Pmc_version=$targetVersion")
-        } else {
-            commandLine("./gradlew", "clean", "build", "-Pmc_version=$targetVersion")
-        }
-        doFirst {
-            project.delete(versionOutputDir)
-        }
-        doLast {
-            project.copy {
-                from(layout.buildDirectory.dir("libs")) {
-                    include("*mc$targetVersion*.jar")
-                }
-                from(project(":fabric").layout.buildDirectory.dir("libs")) {
-                    include("*mc$targetVersion*.jar")
-                }
-                into(versionOutputDir)
-            }
-        }
-    }
-    provider.configure {
-        mustRunAfter(cleanTask)
-        previousTask?.let { mustRunAfter(it) }
-    }
-    multiVersionBuildTasks.add(provider)
-    previousMultiVersionBuildTask = provider
-}
-
-tasks.register("buildAllTargets") {
-    group = "build"
-    description = "Build Pathmind for every currently verified Minecraft target on both loaders."
-    dependsOn(cleanTask)
-    multiVersionBuildTasks.forEach { dependsOn(it) }
 }
 
 publishing {

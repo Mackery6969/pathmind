@@ -1,5 +1,6 @@
 pluginManagement {
     repositories {
+        maven("https://maven.fabricmc.net/")
         gradlePluginPortal()
     }
 }
@@ -7,3 +8,6 @@ pluginManagement {
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
+
+rootProject.name = "pathmind"
+include("fabric")

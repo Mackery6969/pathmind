@@ -65,7 +65,7 @@ final class NodeTargetSensorEvaluator {
             return Optional.empty();
         }
         Vec3 look = client.player.getViewVector(1.0F);
-        return Optional.of(Direction.getNearest(look.x, look.y, look.z));
+        return Optional.of(com.pathmind.util.DirectionCompatibilityBridge.nearest(look.x, look.y, look.z));
     }
 
     Optional<Integer> getCurrentHotbarSlot() {

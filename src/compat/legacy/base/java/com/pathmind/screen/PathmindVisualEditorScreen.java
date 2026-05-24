@@ -3434,7 +3434,7 @@ public class PathmindVisualEditorScreen extends Screen {
         String targetLine = "Built for Minecraft: " + INFO_POPUP_TARGET_VERSION;
         String currentLine = "Running Minecraft: " + getCurrentMinecraftVersion();
         String buildLine = "Current Build: " + getModVersion();
-        String loaderLine = "NeoForge: " + getNeoForgeVersion();
+        String loaderLine = LoaderInfo.getLoaderName() + ": " + getLoaderVersion();
 
         int maxCenteredWidth = scaledWidth - 40;
         drawPopupCenteredTextWithEllipsis(context, authorLine, centerX, textStartY, maxCenteredWidth, getPopupAnimatedColor(infoPopupAnimation, UITheme.TEXT_SECONDARY));
@@ -8271,8 +8271,8 @@ public class PathmindVisualEditorScreen extends Screen {
         return LoaderInfo.getModVersion(PathmindMod.MOD_ID).orElse("Unknown");
     }
 
-    private String getNeoForgeVersion() {
-        return LoaderInfo.getModVersion("neoforge").orElse("Unknown");
+    private String getLoaderVersion() {
+        return LoaderInfo.getLoaderVersion().orElse("Unknown");
     }
 
     private String getCurrentMinecraftVersion() {

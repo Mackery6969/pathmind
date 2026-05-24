@@ -2522,7 +2522,7 @@ public class Node {
                 return false;
             }
             net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-            return !EntityStateOptions.getOptions(BuiltInRegistries.ENTITY_TYPE.get(identifier), client != null ? client.level : null).isEmpty();
+            return !EntityStateOptions.getOptions(BuiltInRegistries.ENTITY_TYPE.getOptional(identifier).orElse(null), client != null ? client.level : null).isEmpty();
         }
         return false;
     }
@@ -5034,7 +5034,7 @@ public class Node {
         int maxChunkX = Math.floorDiv(playerPos.getX() + radius, 16);
         int minChunkZ = Math.floorDiv(playerPos.getZ() - radius, 16);
         int maxChunkZ = Math.floorDiv(playerPos.getZ() + radius, 16);
-        int minY = client.level.getMinBuildHeight();
+        int minY = com.pathmind.util.LevelCompatibilityBridge.minBuildHeight(client.level);
         int maxY = minY + client.level.getHeight() - 1;
         double maxDistanceSq = range * range;
 
@@ -5849,7 +5849,7 @@ public class Node {
             return trimmedState;
         }
         net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (!EntityStateOptions.isStateSupported(BuiltInRegistries.ENTITY_TYPE.get(identifier), client != null ? client.level : null, trimmedState)) {
+        if (!EntityStateOptions.isStateSupported(BuiltInRegistries.ENTITY_TYPE.getOptional(identifier).orElse(null), client != null ? client.level : null, trimmedState)) {
             notifyInvalidEntityStateSelection(primaryEntity, trimmedState);
             return trimmedState;
         }
@@ -6332,7 +6332,7 @@ public class Node {
             if (elementType == NodeType.PARAM_ENTITY) {
                 ResourceLocation identifier = ResourceLocation.tryParse(trimmedEntry);
                 if (identifier != null && BuiltInRegistries.ENTITY_TYPE.containsKey(identifier)) {
-                    EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.get(identifier);
+                    EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(identifier).orElse(null);
                     Optional<Entity> nearest = findNearestEntity(client, entityType, PARAMETER_SEARCH_RADIUS, "");
                     if (nearest.isPresent()) {
                         Entity entity = nearest.get();
