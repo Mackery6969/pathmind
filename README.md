@@ -150,16 +150,16 @@ To build only the NeoForge jar:
 ./gradlew buildNeoForge
 ```
 
+To compile for both loaders:
+
+```bash
+./gradlew build
+```
+
 To compile for a specific supported Minecraft `1.21.x` target, pass `mc_version`:
 
 ```bash
 ./gradlew clean build -Pmc_version=1.21.11
-```
-
-On Windows PowerShell, quote the property:
-
-```powershell
-.\gradlew.bat clean build "-Pmc_version=1.21.11"
 ```
 
 This also works with single-loader builds:
@@ -170,7 +170,7 @@ This also works with single-loader builds:
 
 ### Run In Dev
 
-Fabric is the default development loader:
+Fabric is the default development loader (by default, this just runs fabric client):
 
 ```bash
 ./gradlew runClient
