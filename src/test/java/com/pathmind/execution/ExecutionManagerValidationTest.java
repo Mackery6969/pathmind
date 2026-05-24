@@ -727,15 +727,26 @@ class ExecutionManagerValidationTest {
         Map<Node, Object> activeChains = (Map<Node, Object>) activeChainsField.get(manager);
         int before = activeChains.size();
 
-        CompletableFuture<Void> future = manager.executeExternalBranchAndWait(
-            reloadedStart,
-            reloadedNodes,
-            reloadedConnections,
-            CUSTOM_NODE_FOREVER_PRESET
-        );
+        SettingsManager.Settings settings = SettingsManager.getCurrent();
+        settings.nodeDelayMs = 250;
+        CompletableFuture<Void> future = null;
+        try {
+            future = manager.executeExternalBranchAndWait(
+                reloadedStart,
+                reloadedNodes,
+                reloadedConnections,
+                CUSTOM_NODE_FOREVER_PRESET
+            );
 
-        assertNotNull(future);
-        assertEquals(before + 1, activeChains.size());
+            assertNotNull(future);
+            assertEquals(before + 1, activeChains.size());
+        } finally {
+            settings.nodeDelayMs = 0;
+            manager.requestStopAll();
+            if (future != null) {
+                future.cancel(true);
+            }
+        }
     }
 
     @Test

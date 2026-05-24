@@ -39,21 +39,19 @@ import com.pathmind.util.MatrixStackBridge;
 import com.pathmind.util.ScrollbarHelper;
 import com.pathmind.util.TextRenderUtil;
 import com.pathmind.util.VersionSupport;
-import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.ModContainer;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.resource.language.LanguageManager;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.TextFieldWidget;
+import com.pathmind.util.LoaderInfo;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import com.pathmind.util.RenderStateBridge;
 import com.pathmind.util.OverlayProtection;
 import com.pathmind.util.UiUtilsProxy;
-import net.minecraft.text.Text;
-import net.minecraft.util.Util;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.MathHelper;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryStack;
@@ -193,8 +191,8 @@ public class PathmindVisualEditorScreen extends Screen {
     private static final int NODE_SEARCH_RESULT_TEXT_PADDING = 6;
     private static final String INFO_POPUP_AUTHOR = "soymods";
     private static final String INFO_POPUP_TARGET_VERSION = VersionSupport.SUPPORTED_RANGE;
-    private static final Text TITLE_TEXT = Text.literal("Pathmind");
-    private static final Text INFO_POPUP_TITLE_TEXT = Text.literal("Pathmind");
+    private static final Component TITLE_TEXT = Component.literal("Pathmind");
+    private static final Component INFO_POPUP_TITLE_TEXT = Component.literal("Pathmind");
 
     private NodeGraph nodeGraph;
     private Sidebar sidebar;
@@ -215,7 +213,7 @@ public class PathmindVisualEditorScreen extends Screen {
     private int rightClickStartY = -1;
     private long rightClickStartTime = 0;
     private boolean cuttingConnections = false;
-    private TextFieldWidget nodeSearchField;
+    private EditBox nodeSearchField;
     private boolean nodeSearchOpen = false;
     private int nodeSearchFieldX = 0;
     private int nodeSearchFieldY = 0;
@@ -255,12 +253,12 @@ public class PathmindVisualEditorScreen extends Screen {
     private long animatingPresetDeletionExecuteAtMs = 0L;
     private String activePresetName = "";
     private final PopupAnimationHandler createPresetPopupAnimation = new PopupAnimationHandler();
-    private TextFieldWidget createPresetField;
+    private EditBox createPresetField;
     private String createPresetStatus = "";
     private int createPresetStatusColor = UITheme.TEXT_SECONDARY;
     private final PopupAnimationHandler renamePresetPopupAnimation = new PopupAnimationHandler();
-    private TextFieldWidget renamePresetField;
-    private TextFieldWidget inlinePresetRenameField;
+    private EditBox renamePresetField;
+    private EditBox inlinePresetRenameField;
     private String renamePresetStatus = "";
     private int renamePresetStatusColor = UITheme.TEXT_SECONDARY;
     private String pendingPresetRenameName = "";
@@ -295,10 +293,10 @@ public class PathmindVisualEditorScreen extends Screen {
     private int nodeDelayMs = 150;
     private boolean nodeDelayDragging = false;
     private boolean createListRadiusDragging = false;
-    private TextFieldWidget nodeDelayField;
-    private TextFieldWidget createListRadiusField;
-    private TextFieldWidget settingsNodeSearchField;
-    private final Map<String, TextFieldWidget> presetInputFields = new LinkedHashMap<>();
+    private EditBox nodeDelayField;
+    private EditBox createListRadiusField;
+    private EditBox settingsNodeSearchField;
+    private final Map<String, EditBox> presetInputFields = new LinkedHashMap<>();
     private boolean settingsNodeListView = true;
     private NodeType settingsNodeTargetType = null;
     private Node settingsNodeTarget = null;
@@ -365,7 +363,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     public PathmindVisualEditorScreen() {
-        super(Text.translatable("screen.pathmind.visual_editor.title"));
+        super(Component.translatable("screen.pathmind.visual_editor.title"));
         this.baritoneAvailable = BaritoneDependencyChecker.isBaritoneApiPresent();
         this.uiUtilsAvailable = UiUtilsProxy.isAvailable();
         this.nodeGraph = new NodeGraph();
@@ -385,7 +383,7 @@ public class PathmindVisualEditorScreen extends Screen {
         this.showChatErrors = currentSettings.showChatErrors == null || currentSettings.showChatErrors;
         this.showHudOverlays = currentSettings.showHudOverlays == null || currentSettings.showHudOverlays;
         this.skipPresetDeleteConfirm = currentSettings.skipPresetDeleteConfirm != null && currentSettings.skipPresetDeleteConfirm;
-        this.nodeDelayMs = MathHelper.clamp(
+        this.nodeDelayMs = Mth.clamp(
             currentSettings.nodeDelayMs != null ? currentSettings.nodeDelayMs : 150,
             NODE_DELAY_MIN_MS,
             NODE_DELAY_MAX_MS
@@ -421,48 +419,48 @@ public class PathmindVisualEditorScreen extends Screen {
         nodeGraph.setActivePreset(activePresetName);
 
         if (createPresetField == null) {
-            createPresetField = new PathmindTextField(this.textRenderer, 0, 0, 200, 20, Text.translatable("pathmind.field.presetName"));
+            createPresetField = new PathmindTextField(this.font, 0, 0, 200, 20, Component.translatable("pathmind.field.presetName"));
             createPresetField.setMaxLength(64);
-            createPresetField.setDrawsBackground(false);
+            createPresetField.setBordered(false);
             createPresetField.setVisible(false);
             createPresetField.setEditable(false);
-            createPresetField.setEditableColor(UITheme.TEXT_PRIMARY);
-            createPresetField.setUneditableColor(UITheme.TEXT_TERTIARY);
-            createPresetField.setChangedListener(value -> clearCreatePresetStatus());
-            this.addSelectableChild(createPresetField);
+            createPresetField.setTextColor(UITheme.TEXT_PRIMARY);
+            createPresetField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
+            createPresetField.setResponder(value -> clearCreatePresetStatus());
+            this.addWidget(createPresetField);
         }
 
         if (renamePresetField == null) {
-            renamePresetField = new PathmindTextField(this.textRenderer, 0, 0, 200, 20, Text.translatable("pathmind.field.newPresetName"));
+            renamePresetField = new PathmindTextField(this.font, 0, 0, 200, 20, Component.translatable("pathmind.field.newPresetName"));
             renamePresetField.setMaxLength(64);
-            renamePresetField.setDrawsBackground(false);
+            renamePresetField.setBordered(false);
             renamePresetField.setVisible(false);
             renamePresetField.setEditable(false);
-            renamePresetField.setEditableColor(UITheme.TEXT_PRIMARY);
-            renamePresetField.setUneditableColor(UITheme.TEXT_TERTIARY);
-            renamePresetField.setChangedListener(value -> clearRenamePresetStatus());
-            this.addSelectableChild(renamePresetField);
+            renamePresetField.setTextColor(UITheme.TEXT_PRIMARY);
+            renamePresetField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
+            renamePresetField.setResponder(value -> clearRenamePresetStatus());
+            this.addWidget(renamePresetField);
         }
         if (inlinePresetRenameField == null) {
-            inlinePresetRenameField = new PathmindTextField(this.textRenderer, 0, 0, 200, 20, Text.translatable("pathmind.field.newPresetName"));
+            inlinePresetRenameField = new PathmindTextField(this.font, 0, 0, 200, 20, Component.translatable("pathmind.field.newPresetName"));
             inlinePresetRenameField.setMaxLength(64);
-            inlinePresetRenameField.setDrawsBackground(false);
+            inlinePresetRenameField.setBordered(false);
             inlinePresetRenameField.setVisible(false);
             inlinePresetRenameField.setEditable(false);
-            inlinePresetRenameField.setEditableColor(UITheme.TEXT_PRIMARY);
-            inlinePresetRenameField.setUneditableColor(UITheme.TEXT_TERTIARY);
-            this.addSelectableChild(inlinePresetRenameField);
+            inlinePresetRenameField.setTextColor(UITheme.TEXT_PRIMARY);
+            inlinePresetRenameField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
+            this.addWidget(inlinePresetRenameField);
         }
         if (nodeDelayField == null) {
-            nodeDelayField = new PathmindTextField(this.textRenderer, 0, 0, 120, 20, Text.literal("Delay"));
+            nodeDelayField = new PathmindTextField(this.font, 0, 0, 120, 20, Component.literal("Delay"));
             nodeDelayField.setMaxLength(6);
-            nodeDelayField.setDrawsBackground(false);
+            nodeDelayField.setBordered(false);
             nodeDelayField.setVisible(false);
             nodeDelayField.setEditable(false);
-            nodeDelayField.setEditableColor(UITheme.TEXT_HEADER);
-            nodeDelayField.setUneditableColor(UITheme.TEXT_HEADER);
-            nodeDelayField.setTextPredicate(value -> value == null || value.isEmpty() || value.chars().allMatch(Character::isDigit));
-            nodeDelayField.setChangedListener(value -> {
+            nodeDelayField.setTextColor(UITheme.TEXT_HEADER);
+            nodeDelayField.setTextColorUneditable(UITheme.TEXT_HEADER);
+            nodeDelayField.setFilter(value -> value == null || value.isEmpty() || value.chars().allMatch(Character::isDigit));
+            nodeDelayField.setResponder(value -> {
                 Integer parsed = parseDelayFieldValue(value);
                 if (parsed != null && parsed != nodeDelayMs) {
                     nodeDelayMs = parsed;
@@ -470,18 +468,18 @@ public class PathmindVisualEditorScreen extends Screen {
                     SettingsManager.save(currentSettings);
                 }
             });
-            this.addSelectableChild(nodeDelayField);
+            this.addWidget(nodeDelayField);
         }
         if (createListRadiusField == null) {
-            createListRadiusField = new PathmindTextField(this.textRenderer, 0, 0, 120, 20, Text.literal("Radius"));
+            createListRadiusField = new PathmindTextField(this.font, 0, 0, 120, 20, Component.literal("Radius"));
             createListRadiusField.setMaxLength(6);
-            createListRadiusField.setDrawsBackground(false);
+            createListRadiusField.setBordered(false);
             createListRadiusField.setVisible(false);
             createListRadiusField.setEditable(false);
-            createListRadiusField.setEditableColor(UITheme.TEXT_HEADER);
-            createListRadiusField.setUneditableColor(UITheme.TEXT_HEADER);
-            createListRadiusField.setTextPredicate(value -> value == null || value.isEmpty() || value.chars().allMatch(Character::isDigit));
-            createListRadiusField.setChangedListener(value -> {
+            createListRadiusField.setTextColor(UITheme.TEXT_HEADER);
+            createListRadiusField.setTextColorUneditable(UITheme.TEXT_HEADER);
+            createListRadiusField.setFilter(value -> value == null || value.isEmpty() || value.chars().allMatch(Character::isDigit));
+            createListRadiusField.setResponder(value -> {
                 Node targetNode = getEffectiveSettingsTargetNode();
                 Integer parsed = parseCreateListRadiusFieldValue(value);
                 if (parsed != null && (targetNode == null || targetNode.getType() == NodeType.CREATE_LIST)
@@ -489,32 +487,32 @@ public class PathmindVisualEditorScreen extends Screen {
                     setCreateListSettingsRadius(targetNode, parsed);
                 }
             });
-            this.addSelectableChild(createListRadiusField);
+            this.addWidget(createListRadiusField);
         }
         if (nodeSearchField == null) {
-            nodeSearchField = new PathmindTextField(this.textRenderer, 0, 0, NODE_SEARCH_FIELD_WIDTH, NODE_SEARCH_FIELD_HEIGHT, Text.literal("Search nodes"));
+            nodeSearchField = new PathmindTextField(this.font, 0, 0, NODE_SEARCH_FIELD_WIDTH, NODE_SEARCH_FIELD_HEIGHT, Component.literal("Search nodes"));
             nodeSearchField.setMaxLength(64);
-            nodeSearchField.setDrawsBackground(false);
+            nodeSearchField.setBordered(false);
             nodeSearchField.setVisible(false);
             nodeSearchField.setEditable(false);
-            nodeSearchField.setEditableColor(UITheme.TEXT_PRIMARY);
-            nodeSearchField.setUneditableColor(UITheme.TEXT_TERTIARY);
+            nodeSearchField.setTextColor(UITheme.TEXT_PRIMARY);
+            nodeSearchField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
             nodeSearchField.setHeight(Math.max(10, NODE_SEARCH_FIELD_HEIGHT - TEXT_FIELD_VERTICAL_PADDING * 2));
-            nodeSearchField.setChangedListener(value -> updateNodeSearchMatch());
-            this.addSelectableChild(nodeSearchField);
+            nodeSearchField.setResponder(value -> updateNodeSearchMatch());
+            this.addWidget(nodeSearchField);
         }
         if (settingsNodeSearchField == null) {
-            settingsNodeSearchField = new PathmindTextField(this.textRenderer, 0, 0, NODE_SEARCH_FIELD_WIDTH, SETTINGS_NODE_TYPE_SEARCH_HEIGHT, Text.literal("Search node settings"));
+            settingsNodeSearchField = new PathmindTextField(this.font, 0, 0, NODE_SEARCH_FIELD_WIDTH, SETTINGS_NODE_TYPE_SEARCH_HEIGHT, Component.literal("Search node settings"));
             settingsNodeSearchField.setMaxLength(64);
-            settingsNodeSearchField.setDrawsBackground(false);
+            settingsNodeSearchField.setBordered(false);
             settingsNodeSearchField.setVisible(false);
             settingsNodeSearchField.setEditable(false);
-            settingsNodeSearchField.setEditableColor(UITheme.TEXT_PRIMARY);
-            settingsNodeSearchField.setUneditableColor(UITheme.TEXT_TERTIARY);
+            settingsNodeSearchField.setTextColor(UITheme.TEXT_PRIMARY);
+            settingsNodeSearchField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
             settingsNodeSearchField.setSuggestion("Search node settings");
             settingsNodeSearchField.setHeight(Math.max(10, SETTINGS_NODE_TYPE_SEARCH_HEIGHT - TEXT_FIELD_VERTICAL_PADDING * 2));
-            settingsNodeSearchField.setChangedListener(value -> settingsNodeSelectorScrollOffset = 0);
-            this.addSelectableChild(settingsNodeSearchField);
+            settingsNodeSearchField.setResponder(value -> settingsNodeSelectorScrollOffset = 0);
+            this.addWidget(settingsNodeSearchField);
         }
 
         updateImportExportPathFromPreset();
@@ -545,7 +543,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         OverlayProtection.setPathmindRendering(true);
         try {
         recoverStaleLeftMouseDrag(mouseX, mouseY);
@@ -577,7 +575,7 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean allowSidebarTooltips = showWorkspaceTooltips && !nodeGraph.isAnyNodeBeingDragged();
         sidebar.render(
             context,
-            this.textRenderer,
+            this.font,
             mouseX,
             mouseY,
             TITLE_BAR_HEIGHT,
@@ -635,7 +633,7 @@ public class PathmindVisualEditorScreen extends Screen {
             DrawContextBridge.startNewRootLayer(context);
         }
 
-        Object popupMatrices = context.getMatrices();
+        Object popupMatrices = context.pose();
         boolean popupDepthPushed = isPopupObscuringWorkspace();
         if (popupDepthPushed) {
             MatrixStackBridge.push(popupMatrices);
@@ -652,12 +650,12 @@ public class PathmindVisualEditorScreen extends Screen {
 
             // Render parameter overlay if visible
             if (parameterOverlay != null && parameterOverlay.isVisible()) {
-                parameterOverlay.render(context, this.textRenderer, mouseX, mouseY, delta);
+                parameterOverlay.render(context, this.font, mouseX, mouseY, delta);
             }
 
             // Render book text editor overlay if visible
             if (bookTextEditorOverlay != null && bookTextEditorOverlay.isVisible()) {
-                bookTextEditorOverlay.render(context, this.textRenderer, mouseX, mouseY, delta);
+                bookTextEditorOverlay.render(context, this.font, mouseX, mouseY, delta);
             }
 
             if (clearPopupAnimation.isVisible()) {
@@ -708,9 +706,9 @@ public class PathmindVisualEditorScreen extends Screen {
 
         // Render context menu on top of everything
         nodeGraph.updateNodeContextMenuHover(mouseX, mouseY);
-        nodeGraph.renderNodeContextMenu(context, this.textRenderer);
+        nodeGraph.renderNodeContextMenu(context, this.font);
         nodeGraph.updateContextMenuHover(mouseX, mouseY);
-        nodeGraph.renderContextMenu(context, this.textRenderer, mouseX, mouseY);
+        nodeGraph.renderContextMenu(context, this.font, mouseX, mouseY);
         renderNodeSearchField(context, mouseX, mouseY, delta);
         DrawContextBridge.startNewRootLayer(context);
         renderDraggedWorkspaceLayer(context, mouseX, mouseY, delta);
@@ -718,10 +716,10 @@ public class PathmindVisualEditorScreen extends Screen {
             renderDraggingNode(context, mouseX, mouseY);
         }
         DrawContextBridge.startNewRootLayer(context);
-        NodeErrorNotificationOverlay.getInstance().render(context, this.textRenderer, this.width, this.height);
+        NodeErrorNotificationOverlay.getInstance().render(context, this.font, this.width, this.height);
         if (nodeGraph.isScreenCoordinateCaptureActive()) {
             DrawContextBridge.startNewRootLayer(context);
-            nodeGraph.renderScreenCoordinateCaptureOverlay(context, this.textRenderer, mouseX, mouseY);
+            nodeGraph.renderScreenCoordinateCaptureOverlay(context, this.font, mouseX, mouseY);
         }
         DrawContextBridge.startNewRootLayer(context);
         renderCustomCursor(context, mouseX, mouseY);
@@ -734,7 +732,7 @@ public class PathmindVisualEditorScreen extends Screen {
         if (systemCursorHidden) {
             return;
         }
-        PathmindCursor.hideSystemCursor(this.client != null ? this.client : MinecraftClient.getInstance());
+        PathmindCursor.hideSystemCursor(this.minecraft != null ? this.minecraft : Minecraft.getInstance());
         systemCursorHidden = true;
     }
 
@@ -742,20 +740,20 @@ public class PathmindVisualEditorScreen extends Screen {
         if (!systemCursorHidden) {
             return;
         }
-        PathmindCursor.showSystemCursor(this.client != null ? this.client : MinecraftClient.getInstance());
+        PathmindCursor.showSystemCursor(this.minecraft != null ? this.minecraft : Minecraft.getInstance());
         systemCursorHidden = false;
     }
 
-    private void renderCustomCursor(DrawContext context, int mouseX, int mouseY) {
+    private void renderCustomCursor(GuiGraphics context, int mouseX, int mouseY) {
         NodeGraph.StickyNoteResizeCorner resizeCorner = getHoveredStickyNoteResizeCorner(mouseX, mouseY);
         PathmindCursor.render(context, resolveCursorTexture(mouseX, mouseY, resizeCorner), mouseX, mouseY);
     }
 
-    private Identifier resolveCursorTexture(int mouseX, int mouseY) {
+    private ResourceLocation resolveCursorTexture(int mouseX, int mouseY) {
         return resolveCursorTexture(mouseX, mouseY, getHoveredStickyNoteResizeCorner(mouseX, mouseY));
     }
 
-    private Identifier resolveCursorTexture(int mouseX, int mouseY, NodeGraph.StickyNoteResizeCorner resizeCorner) {
+    private ResourceLocation resolveCursorTexture(int mouseX, int mouseY, NodeGraph.StickyNoteResizeCorner resizeCorner) {
         if (nodeGraph.isConnectionCutActive()) {
             return PathmindCursor.CUT_TEXTURE;
         }
@@ -821,12 +819,12 @@ public class PathmindVisualEditorScreen extends Screen {
     }
     
     private boolean shouldShowExecutionControls() {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         return client != null && client.player != null;
     }
 
     private boolean handleNodeDoubleClickExecution(Node clickedNode) {
-        if (clickedNode == null || this.client == null || this.client.player == null || this.client.world == null) {
+        if (clickedNode == null || this.minecraft == null || this.minecraft.player == null || this.minecraft.level == null) {
             return false;
         }
 
@@ -845,12 +843,12 @@ public class PathmindVisualEditorScreen extends Screen {
         isDraggingFromSidebar = false;
         draggingNodeType = null;
         draggingSidebarNode = null;
-        this.client.setScreen(null);
+        this.minecraft.setScreen(null);
         return true;
     }
 
     private void recoverStaleLeftMouseDrag(int mouseX, int mouseY) {
-        MinecraftClient client = this.client != null ? this.client : MinecraftClient.getInstance();
+        Minecraft client = this.minecraft != null ? this.minecraft : Minecraft.getInstance();
         if (InputCompatibilityBridge.isMouseButtonPressed(client, GLFW.GLFW_MOUSE_BUTTON_LEFT)) {
             return;
         }
@@ -959,7 +957,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return UITheme.OVERLAY_BACKGROUND;
     }
 
-    private void renderPopupScrimOverlay(DrawContext context) {
+    private void renderPopupScrimOverlay(GuiGraphics context) {
         if (!isPopupObscuringWorkspace()) {
             return;
         }
@@ -1030,7 +1028,7 @@ public class PathmindVisualEditorScreen extends Screen {
         if (!uiUtilsAvailable && nodeGraph.containsUiUtilsNodes()) { missingUiUtilsPopupAnimation.show(); } else { missingUiUtilsPopupAnimation.hide(); }
     }
     
-    private void renderDraggingNode(DrawContext context, int mouseX, int mouseY) {
+    private void renderDraggingNode(GuiGraphics context, int mouseX, int mouseY) {
         if (draggingNodeType == null && draggingSidebarNode == null) return;
 
         float scale = nodeGraph.getZoomScale();
@@ -1050,7 +1048,7 @@ public class PathmindVisualEditorScreen extends Screen {
         int screenNodeX = nodeGraph.worldToScreenX(previewPosition[0]);
         int screenNodeY = nodeGraph.worldToScreenY(previewPosition[1]);
 
-        var matrices = context.getMatrices();
+        var matrices = context.pose();
         MatrixStackBridge.push(matrices);
         MatrixStackBridge.scale(matrices, scale, scale);
 
@@ -1073,9 +1071,9 @@ public class PathmindVisualEditorScreen extends Screen {
         // Node header
         if (renderType != NodeType.START && renderType != NodeType.EVENT_FUNCTION) {
             context.fill(x + 1, y + 1, x + width - 1, y + 14, nodeColor);
-            context.drawTextWithShadow(
-                this.textRenderer,
-                Text.literal(renderType == NodeType.TEMPLATE ? tempNode.getTemplateName() : renderType.getDisplayName()),
+            context.drawString(
+                this.font,
+                Component.literal(renderType == NodeType.TEMPLATE ? tempNode.getTemplateName() : renderType.getDisplayName()),
                 x + 4,
                 y + 4,
                 UITheme.TEXT_HEADER
@@ -1085,7 +1083,7 @@ public class PathmindVisualEditorScreen extends Screen {
         MatrixStackBridge.pop(matrices);
     }
 
-    private void renderZoomControls(DrawContext context, int mouseX, int mouseY, boolean disabled) {
+    private void renderZoomControls(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
         int buttonY = getZoomButtonY();
         NodeGraph.ZoomLevel level = nodeGraph.getZoomLevel();
         boolean minusActive = level != NodeGraph.ZoomLevel.FOCUSED;
@@ -1094,7 +1092,7 @@ public class PathmindVisualEditorScreen extends Screen {
         drawZoomButton(context, getZoomPlusButtonX(), buttonY, mouseX, mouseY, disabled, false, plusActive);
     }
 
-    private void drawZoomButton(DrawContext context, int x, int y, int mouseX, int mouseY, boolean disabled, boolean isMinus, boolean active) {
+    private void drawZoomButton(GuiGraphics context, int x, int y, int mouseX, int mouseY, boolean disabled, boolean isMinus, boolean active) {
         boolean hovered = !disabled && isPointInRect(mouseX, mouseY, x, y, ZOOM_BUTTON_SIZE, ZOOM_BUTTON_SIZE);
         String hoverKey = isMinus ? "zoom-minus-button" : "zoom-plus-button";
         drawToolbarButtonFrame(context, x, y, ZOOM_BUTTON_SIZE, ZOOM_BUTTON_SIZE, hovered, active, disabled, hoverKey);
@@ -1106,14 +1104,14 @@ public class PathmindVisualEditorScreen extends Screen {
             iconColor = getAccentColor();
         }
 
-        Text iconText = Text.literal(isMinus ? "-" : "+");
-        int iconWidth = this.textRenderer.getWidth(iconText);
+        Component iconText = Component.literal(isMinus ? "-" : "+");
+        int iconWidth = this.font.width(iconText);
         int iconX = x + (ZOOM_BUTTON_SIZE - iconWidth) / 2 + 1;
-        int iconY = y + (ZOOM_BUTTON_SIZE - this.textRenderer.fontHeight) / 2 + 2;
-        context.drawTextWithShadow(this.textRenderer, iconText, iconX, iconY, iconColor);
+        int iconY = y + (ZOOM_BUTTON_SIZE - this.font.lineHeight) / 2 + 2;
+        context.drawString(this.font, iconText, iconX, iconY, iconColor);
     }
     
-    private void renderNodeGraph(DrawContext context, int mouseX, int mouseY, float delta, boolean onlyDragged) {
+    private void renderNodeGraph(GuiGraphics context, int mouseX, int mouseY, float delta, boolean onlyDragged) {
         if (!onlyDragged) {
             // Node graph background
             context.fill(Sidebar.getCollapsedWidth(), TITLE_BAR_HEIGHT, this.width, this.height, UITheme.BACKGROUND_PRIMARY);
@@ -1127,15 +1125,15 @@ public class PathmindVisualEditorScreen extends Screen {
         nodeGraph.updateScreenCoordinateCapturePreview(mouseX, mouseY);
         
         // Render nodes
-        nodeGraph.render(context, this.textRenderer, mouseX, mouseY, delta, onlyDragged);
+        nodeGraph.render(context, this.font, mouseX, mouseY, delta, onlyDragged);
     }
 
-    private void renderDraggedWorkspaceLayer(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderDraggedWorkspaceLayer(GuiGraphics context, int mouseX, int mouseY, float delta) {
         renderNodeGraph(context, mouseX, mouseY, delta, true);
         nodeGraph.renderSelectionBox(context);
     }
     
-    private void renderGrid(DrawContext context) {
+    private void renderGrid(GuiGraphics context) {
         int gridSize = 20;
         int startX = Sidebar.getCollapsedWidth();
         int startY = TITLE_BAR_HEIGHT;
@@ -1164,7 +1162,7 @@ public class PathmindVisualEditorScreen extends Screen {
             if (screenX < startX || screenX > endX) {
                 continue;
             }
-            context.drawVerticalLine(screenX, startY, endY, UITheme.GRID_LINE);
+            context.vLine(screenX, startY, endY, UITheme.GRID_LINE);
         }
 
         int firstHorizontal = topWorld - Math.floorMod(topWorld, gridSize);
@@ -1173,7 +1171,7 @@ public class PathmindVisualEditorScreen extends Screen {
             if (screenY < startY || screenY > endY) {
                 continue;
             }
-            context.drawHorizontalLine(startX, endX, screenY, UITheme.GRID_LINE);
+            context.hLine(startX, endX, screenY, UITheme.GRID_LINE);
         }
     }
 
@@ -1316,8 +1314,8 @@ public class PathmindVisualEditorScreen extends Screen {
             if (isMarketplaceButtonClicked((int) mouseX, (int) mouseY, button)) {
                 nodeGraph.save();
                 PresetManager.setActivePreset(activePresetName);
-                if (this.client != null) {
-                    this.client.setScreen(new PathmindMarketplaceScreen(this));
+                if (this.minecraft != null) {
+                    this.minecraft.setScreen(new PathmindMarketplaceScreen(this));
                 }
                 return true;
             }
@@ -1388,7 +1386,7 @@ public class PathmindVisualEditorScreen extends Screen {
         if (button == 0 && nodeGraph.handleAmountSignDropdownClick(null, (int)mouseX, (int)mouseY)) {
             return true;
         }
-        if (button == 0 && nodeGraph.handleOperatorToggleClick(textRenderer, (int)mouseX, (int)mouseY)) {
+        if (button == 0 && nodeGraph.handleOperatorToggleClick(font, (int)mouseX, (int)mouseY)) {
             return true;
         }
 
@@ -1473,8 +1471,8 @@ public class PathmindVisualEditorScreen extends Screen {
                     isDraggingFromSidebar = false;
                     draggingNodeType = null;
                     draggingSidebarNode = null;
-                    if (this.client != null) {
-                        this.client.setScreen(null);
+                    if (this.minecraft != null) {
+                        this.minecraft.setScreen(null);
                     }
                 }
                 return true;
@@ -2114,7 +2112,7 @@ public class PathmindVisualEditorScreen extends Screen {
             }
         }
         if (validationPanelOpen) {
-            for (TextFieldWidget field : presetInputFields.values()) {
+            for (EditBox field : presetInputFields.values()) {
                 if (field != null && field.isFocused() && field.keyPressed(keyCode, scanCode, modifiers)) {
                     return true;
                 }
@@ -2289,7 +2287,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
         // Close screen with Escape key
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-            close();
+            onClose();
             return true;
         }
         
@@ -2327,7 +2325,7 @@ public class PathmindVisualEditorScreen extends Screen {
             return true;
         }
         if (validationPanelOpen) {
-            for (TextFieldWidget field : presetInputFields.values()) {
+            for (EditBox field : presetInputFields.values()) {
                 if (field != null && field.isFocused() && field.charTyped(chr, modifiers)) {
                     return true;
                 }
@@ -2380,11 +2378,11 @@ public class PathmindVisualEditorScreen extends Screen {
             return true;
         }
 
-        if (nodeGraph.handleStopTargetCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleStopTargetCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
-        if (nodeGraph.handleVariableCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleVariableCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
@@ -2392,19 +2390,19 @@ public class PathmindVisualEditorScreen extends Screen {
             return true;
         }
 
-        if (nodeGraph.handleParameterCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleParameterCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
-        if (nodeGraph.handleMessageCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleMessageCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
-        if (nodeGraph.handleAmountCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleAmountCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
-        if (nodeGraph.handleCoordinateCharTyped(chr, modifiers, this.textRenderer)) {
+        if (nodeGraph.handleCoordinateCharTyped(chr, modifiers, this.font)) {
             return true;
         }
 
@@ -2500,7 +2498,7 @@ public class PathmindVisualEditorScreen extends Screen {
                 && isPointInRect((int) mouseX, (int) mouseY, dropdownX, optionStartY, PRESET_DROPDOWN_WIDTH, dropdownHeight)) {
                 int delta = (int) Math.signum(verticalAmount);
                 if (delta != 0) {
-                    presetDropdownScrollOffset = MathHelper.clamp(presetDropdownScrollOffset - delta, 0, layout.maxScrollOffset);
+                    presetDropdownScrollOffset = Mth.clamp(presetDropdownScrollOffset - delta, 0, layout.maxScrollOffset);
                 }
             }
             return true;
@@ -2548,7 +2546,7 @@ public class PathmindVisualEditorScreen extends Screen {
         activeWorkspaceTabIndex = 0;
     }
 
-    private void renderWorkspaceTabs(DrawContext context, int mouseX, int mouseY) {
+    private void renderWorkspaceTabs(GuiGraphics context, int mouseX, int mouseY) {
         tickQueuedPresetDeletionAnimation();
         if (!isPopupObscuringWorkspace() && pendingPresetTabInteractionName != null && draggingPresetTabName == null) {
             updatePendingPresetTabInteraction(mouseX, mouseY);
@@ -2599,14 +2597,14 @@ public class PathmindVisualEditorScreen extends Screen {
         int addTabX = Math.max(getPresetTabStartX(), x - TAB_GAP);
         presetTabAddButtonFadeAnimation.animateTo(draggingPresetTabName != null ? 0f : 1f, 120, AnimationHelper::easeOutCubic);
         presetTabAddButtonFadeAnimation.tick();
-        float plusAlpha = MathHelper.clamp(presetTabAddButtonFadeAnimation.getValue(), 0f, 1f);
+        float plusAlpha = Mth.clamp(presetTabAddButtonFadeAnimation.getValue(), 0f, 1f);
         if (addTabX + PRESET_TAB_ADD_WIDTH <= rightLimit) {
             boolean hovered = isPointInRect(mouseX, mouseY, addTabX, y, PRESET_TAB_ADD_WIDTH, TAB_HEIGHT);
-            context.drawCenteredTextWithShadow(
-                this.textRenderer,
-                Text.literal("+"),
+            context.drawCenteredString(
+                this.font,
+                Component.literal("+"),
                 addTabX + PRESET_TAB_ADD_WIDTH / 2,
-                y + (TAB_HEIGHT - this.textRenderer.fontHeight) / 2 + 1,
+                y + (TAB_HEIGHT - this.font.lineHeight) / 2 + 1,
                 applyAlpha(hovered ? getAccentColor() : UITheme.ICON_MUTED_BRIGHT, plusAlpha)
             );
         }
@@ -2762,7 +2760,7 @@ public class PathmindVisualEditorScreen extends Screen {
         if (orderIndex < 0) {
             return;
         }
-        int clampedTarget = MathHelper.clamp(targetIndex, 1, presetTabOrder.size() - 1);
+        int clampedTarget = Mth.clamp(targetIndex, 1, presetTabOrder.size() - 1);
         if (clampedTarget != orderIndex) {
             presetTabOrder.remove(orderIndex);
             presetTabOrder.add(clampedTarget, draggingPresetTabName);
@@ -2794,7 +2792,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return xs;
     }
 
-    private void drawPresetTab(DrawContext context, int mouseX, int mouseY, String label, int x, int y, int tabWidth, boolean dragging) {
+    private void drawPresetTab(GuiGraphics context, int mouseX, int mouseY, String label, int x, int y, int tabWidth, boolean dragging) {
         boolean active = label.equals(activePresetName);
         boolean hovered = isPointInRect(mouseX, mouseY, x, y, tabWidth, TAB_HEIGHT);
         int fill = active ? UITheme.BUTTON_ACTIVE_BG : UITheme.BUTTON_DEFAULT_BG;
@@ -2821,8 +2819,8 @@ public class PathmindVisualEditorScreen extends Screen {
         int closeSpace = deletable ? (PRESET_TAB_CLOSE_GAP + PRESET_TAB_CLOSE_ICON_SIZE + PRESET_TAB_CLOSE_HITBOX_PADDING * 2) : 0;
         int textMaxWidth = Math.max(4, tabWidth - PRESET_TAB_TEXT_PADDING * 2 - closeSpace);
         if (!label.equals(inlinePresetRenameName)) {
-            String drawLabel = TextRenderUtil.trimWithEllipsis(this.textRenderer, label, textMaxWidth);
-            context.drawText(this.textRenderer, Text.literal(drawLabel), x + PRESET_TAB_TEXT_PADDING, y + (TAB_HEIGHT - this.textRenderer.fontHeight) / 2 + 1, textColor, false);
+            String drawLabel = TextRenderUtil.trimWithEllipsis(this.font, label, textMaxWidth);
+            context.drawString(this.font, Component.literal(drawLabel), x + PRESET_TAB_TEXT_PADDING, y + (TAB_HEIGHT - this.font.lineHeight) / 2 + 1, textColor, false);
         }
 
         if (deletable) {
@@ -2890,11 +2888,11 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private int[] getPresetTabTitleBounds(String label, int x, int y, int tabWidth) {
         int textMaxWidth = getPresetTabTextMaxWidth(label, tabWidth);
-        String drawLabel = TextRenderUtil.trimWithEllipsis(this.textRenderer, label, textMaxWidth);
+        String drawLabel = TextRenderUtil.trimWithEllipsis(this.font, label, textMaxWidth);
         int textX = x + PRESET_TAB_TEXT_PADDING;
-        int textY = y + (TAB_HEIGHT - this.textRenderer.fontHeight) / 2 + 1;
-        int textWidth = Math.max(4, this.textRenderer.getWidth(drawLabel));
-        return new int[]{textX, textY - 1, Math.min(textWidth, textMaxWidth), this.textRenderer.fontHeight + 2};
+        int textY = y + (TAB_HEIGHT - this.font.lineHeight) / 2 + 1;
+        int textWidth = Math.max(4, this.font.width(drawLabel));
+        return new int[]{textX, textY - 1, Math.min(textWidth, textMaxWidth), this.font.lineHeight + 2};
     }
 
     private boolean isPointInPresetTabTitle(int mouseX, int mouseY, String label, int x, int y, int tabWidth) {
@@ -2911,12 +2909,12 @@ public class PathmindVisualEditorScreen extends Screen {
         clearPendingPresetTabInteraction();
         endPresetTabDrag();
         inlinePresetRenameName = presetName;
-        inlinePresetRenameField.setText(presetName);
+        inlinePresetRenameField.setValue(presetName);
         inlinePresetRenameField.setVisible(true);
         inlinePresetRenameField.setEditable(true);
         inlinePresetRenameField.setFocused(true);
-        inlinePresetRenameField.setCursorToStart(false);
-        inlinePresetRenameField.setSelectionEnd(presetName.length());
+        inlinePresetRenameField.moveCursorToStart(false);
+        inlinePresetRenameField.setHighlightPos(presetName.length());
     }
 
     private boolean renamePresetInternal(String currentName, String desiredName) {
@@ -2952,7 +2950,7 @@ public class PathmindVisualEditorScreen extends Screen {
         }
         boolean renamed = false;
         if (commit && inlinePresetRenameField != null) {
-            renamed = renamePresetInternal(inlinePresetRenameName, inlinePresetRenameField.getText());
+            renamed = renamePresetInternal(inlinePresetRenameName, inlinePresetRenameField.getValue());
         }
         if (commit && !renamed) {
             inlinePresetRenameField.setFocused(true);
@@ -2966,7 +2964,7 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
-    private void renderInlinePresetRenameField(DrawContext context, int mouseX, int mouseY, List<String> tabs, int[] tabWidths, int[] tabXs, int y, int dragIndex) {
+    private void renderInlinePresetRenameField(GuiGraphics context, int mouseX, int mouseY, List<String> tabs, int[] tabWidths, int[] tabXs, int y, int dragIndex) {
         if (!isInlinePresetRenameActive() || inlinePresetRenameField == null) {
             return;
         }
@@ -2986,7 +2984,7 @@ public class PathmindVisualEditorScreen extends Screen {
             int[] titleBounds = getPresetTabTitleBounds(label, drawX, y, tabWidth);
             int fieldX = titleBounds[0];
             int fieldWidth = getPresetTabTextMaxWidth(label, tabWidth);
-            int fieldHeight = Math.max(this.textRenderer.fontHeight + 2, titleBounds[3]);
+            int fieldHeight = Math.max(this.font.lineHeight + 2, titleBounds[3]);
             int fieldY = titleBounds[1];
             int frameX = Math.max(drawX + 2, fieldX - 3);
             int frameY = y + 2;
@@ -2996,8 +2994,8 @@ public class PathmindVisualEditorScreen extends Screen {
             DrawContextBridge.drawBorderInLayer(context, frameX, frameY, frameWidth, frameHeight, getAccentColor());
             inlinePresetRenameField.setVisible(true);
             inlinePresetRenameField.setEditable(true);
-            inlinePresetRenameField.setEditableColor(UITheme.TEXT_PRIMARY);
-            inlinePresetRenameField.setUneditableColor(UITheme.TEXT_TERTIARY);
+            inlinePresetRenameField.setTextColor(UITheme.TEXT_PRIMARY);
+            inlinePresetRenameField.setTextColorUneditable(UITheme.TEXT_TERTIARY);
             inlinePresetRenameField.setPosition(fieldX, fieldY);
             inlinePresetRenameField.setWidth(fieldWidth);
             inlinePresetRenameField.setHeight(fieldHeight);
@@ -3034,12 +3032,12 @@ public class PathmindVisualEditorScreen extends Screen {
     private float getPresetTabAppearProgress(String presetName) {
         AnimatedValue animation = presetTabAppearAnimations.computeIfAbsent(presetName, key -> new AnimatedValue(1f));
         animation.tick();
-        return MathHelper.clamp(animation.getValue(), 0f, 1f);
+        return Mth.clamp(animation.getValue(), 0f, 1f);
     }
 
     private int applyAlpha(int color, float alpha) {
         int targetAlpha = (color >>> 24) & 0xFF;
-        int appliedAlpha = MathHelper.clamp(Math.round(targetAlpha * MathHelper.clamp(alpha, 0f, 1f)), 0, 255);
+        int appliedAlpha = Mth.clamp(Math.round(targetAlpha * Mth.clamp(alpha, 0f, 1f)), 0, 255);
         return (color & 0x00FFFFFF) | (appliedAlpha << 24);
     }
 
@@ -3072,8 +3070,8 @@ public class PathmindVisualEditorScreen extends Screen {
             String label = tabNames.get(i);
             boolean deletable = !isPresetDeleteDisabled(label);
             int closeSpace = deletable ? (PRESET_TAB_CLOSE_GAP + PRESET_TAB_CLOSE_ICON_SIZE + PRESET_TAB_CLOSE_HITBOX_PADDING * 2) : 0;
-            int width = this.textRenderer.getWidth(label) + PRESET_TAB_TEXT_PADDING * 2 + closeSpace;
-            width = MathHelper.clamp(width, TAB_MIN_WIDTH, TAB_MAX_WIDTH);
+            int width = this.font.width(label) + PRESET_TAB_TEXT_PADDING * 2 + closeSpace;
+            width = Mth.clamp(width, TAB_MIN_WIDTH, TAB_MAX_WIDTH);
             preferred[i] = width;
             preferredTotal += width;
         }
@@ -3271,11 +3269,11 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         nodeGraph.persistSessionViewportState();
         autoSaveWorkspace();
         restoreSystemCursor();
-        super.close();
+        super.onClose();
     }
 
     @Override
@@ -3290,7 +3288,7 @@ public class PathmindVisualEditorScreen extends Screen {
         super.removed();
     }
 
-    private void renderClearConfirmationPopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderClearConfirmationPopup(GuiGraphics context, int mouseX, int mouseY) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, clearPopupAnimation.getPopupAlpha());
 
         int popupWidth = 280;
@@ -3305,9 +3303,9 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, clearPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
-            Text.translatable("pathmind.popup.clearWorkspace.title"),
+        context.drawCenteredString(
+            this.font,
+            Component.translatable("pathmind.popup.clearWorkspace.title"),
             popupX + scaledWidth / 2,
             popupY + 14,
             getPopupAnimatedColor(clearPopupAnimation, UITheme.TEXT_PRIMARY)
@@ -3315,7 +3313,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
         drawPopupTextWithEllipsis(
             context,
-            Text.translatable("pathmind.popup.clearWorkspace.message").getString(),
+            Component.translatable("pathmind.popup.clearWorkspace.message").getString(),
             popupX + 20,
             popupY + 48,
             scaledWidth - 40,
@@ -3332,14 +3330,14 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean confirmHovered = isPointInRect(mouseX, mouseY, confirmX, buttonY, buttonWidth, buttonHeight);
 
         drawPopupButton(context, cancelX, buttonY, buttonWidth, buttonHeight, cancelHovered,
-            Text.translatable("pathmind.button.cancel"), PopupButtonStyle.DEFAULT, clearPopupAnimation);
+            Component.translatable("pathmind.button.cancel"), PopupButtonStyle.DEFAULT, clearPopupAnimation);
         drawPopupButton(context, confirmX, buttonY, buttonWidth, buttonHeight, confirmHovered,
-            Text.translatable("pathmind.button.clear"), PopupButtonStyle.PRIMARY, clearPopupAnimation);
+            Component.translatable("pathmind.button.clear"), PopupButtonStyle.PRIMARY, clearPopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderImportExportPopup(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderImportExportPopup(GuiGraphics context, int mouseX, int mouseY, float delta) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, importExportPopupAnimation.getPopupAlpha());
 
         int popupWidth = 360;
@@ -3354,26 +3352,26 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, importExportPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
-            Text.translatable("pathmind.popup.importExport.title"),
+        context.drawCenteredString(
+            this.font,
+            Component.translatable("pathmind.popup.importExport.title"),
             popupX + scaledWidth / 2,
             popupY + 14,
             getPopupAnimatedColor(importExportPopupAnimation, UITheme.TEXT_PRIMARY)
         );
 
         int infoY = popupY + 44;
-        String importInfo = Text.translatable("pathmind.popup.importExport.importInfo").getString();
+        String importInfo = Component.translatable("pathmind.popup.importExport.importInfo").getString();
         drawPopupTextWithEllipsis(context, importInfo, popupX + 20, infoY, scaledWidth - 40,
             getPopupAnimatedColor(importExportPopupAnimation, UITheme.TEXT_SECONDARY));
 
-        String exportInfo = Text.translatable("pathmind.popup.importExport.exportInfo").getString();
+        String exportInfo = Component.translatable("pathmind.popup.importExport.exportInfo").getString();
         drawPopupTextWithEllipsis(context, exportInfo, popupX + 20, infoY + 14, scaledWidth - 40,
             getPopupAnimatedColor(importExportPopupAnimation, UITheme.TEXT_SECONDARY));
 
         Path defaultPath = NodeGraphPersistence.getDefaultSavePath();
         if (defaultPath != null) {
-            String defaultLabel = Text.translatable("pathmind.popup.importExport.defaultSave", defaultPath.toString()).getString();
+            String defaultLabel = Component.translatable("pathmind.popup.importExport.defaultSave", defaultPath.toString()).getString();
             drawPopupTextWithEllipsis(context, defaultLabel, popupX + 20, infoY + 30, scaledWidth - 40,
                 getPopupAnimatedColor(importExportPopupAnimation, UITheme.TEXT_TERTIARY));
         }
@@ -3396,16 +3394,16 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean cancelHovered = isPointInRect(mouseX, mouseY, cancelX, buttonY, buttonWidth, buttonHeight);
 
         drawPopupButton(context, importX, buttonY, buttonWidth, buttonHeight, importHovered,
-            Text.translatable("pathmind.button.import"), PopupButtonStyle.PRIMARY, importExportPopupAnimation);
+            Component.translatable("pathmind.button.import"), PopupButtonStyle.PRIMARY, importExportPopupAnimation);
         drawPopupButton(context, exportX, buttonY, buttonWidth, buttonHeight, exportHovered,
-            Text.translatable("pathmind.button.export"), PopupButtonStyle.PRIMARY, importExportPopupAnimation);
+            Component.translatable("pathmind.button.export"), PopupButtonStyle.PRIMARY, importExportPopupAnimation);
         drawPopupButton(context, cancelX, buttonY, buttonWidth, buttonHeight, cancelHovered,
-            Text.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, importExportPopupAnimation);
+            Component.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, importExportPopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderInfoPopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderInfoPopup(GuiGraphics context, int mouseX, int mouseY) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, infoPopupAnimation.getPopupAlpha());
 
         int popupWidth = INFO_POPUP_WIDTH;
@@ -3420,8 +3418,8 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, infoPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
+        context.drawCenteredString(
+            this.font,
             INFO_POPUP_TITLE_TEXT,
             popupX + scaledWidth / 2,
             popupY + 14,
@@ -3436,7 +3434,7 @@ public class PathmindVisualEditorScreen extends Screen {
         String targetLine = "Built for Minecraft: " + INFO_POPUP_TARGET_VERSION;
         String currentLine = "Running Minecraft: " + getCurrentMinecraftVersion();
         String buildLine = "Current Build: " + getModVersion();
-        String loaderLine = "Fabric Loader: " + getFabricLoaderVersion();
+        String loaderLine = "NeoForge: " + getNeoForgeVersion();
 
         int maxCenteredWidth = scaledWidth - 40;
         drawPopupCenteredTextWithEllipsis(context, authorLine, centerX, textStartY, maxCenteredWidth, getPopupAnimatedColor(infoPopupAnimation, UITheme.TEXT_SECONDARY));
@@ -3458,7 +3456,7 @@ public class PathmindVisualEditorScreen extends Screen {
             buttonWidth,
             buttonHeight,
             closeHovered,
-            Text.translatable("pathmind.button.close"),
+            Component.translatable("pathmind.button.close"),
             PopupButtonStyle.DEFAULT,
             infoPopupAnimation
         );
@@ -3466,7 +3464,7 @@ public class PathmindVisualEditorScreen extends Screen {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderMissingBaritonePopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderMissingBaritonePopup(GuiGraphics context, int mouseX, int mouseY) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, missingBaritonePopupAnimation.getPopupAlpha());
 
         int popupWidth = MISSING_BARITONE_POPUP_WIDTH;
@@ -3484,8 +3482,8 @@ public class PathmindVisualEditorScreen extends Screen {
         int centerX = popupX + scaledWidth / 2;
         int messageY = popupY + 16;
         int maxCenteredWidth = scaledWidth - 40;
-        drawPopupCenteredTextWithEllipsis(context, Text.translatable("pathmind.popup.missingBaritone.title").getString(), centerX, messageY, maxCenteredWidth, getPopupAnimatedColor(missingBaritonePopupAnimation, UITheme.TEXT_PRIMARY));
-        drawPopupCenteredTextWithEllipsis(context, Text.translatable("pathmind.popup.missingBaritone.message").getString(), centerX, messageY + 16, maxCenteredWidth, getPopupAnimatedColor(missingBaritonePopupAnimation, UITheme.TEXT_PRIMARY));
+        drawPopupCenteredTextWithEllipsis(context, Component.translatable("pathmind.popup.missingBaritone.title").getString(), centerX, messageY, maxCenteredWidth, getPopupAnimatedColor(missingBaritonePopupAnimation, UITheme.TEXT_PRIMARY));
+        drawPopupCenteredTextWithEllipsis(context, Component.translatable("pathmind.popup.missingBaritone.message").getString(), centerX, messageY + 16, maxCenteredWidth, getPopupAnimatedColor(missingBaritonePopupAnimation, UITheme.TEXT_PRIMARY));
         drawPopupCenteredTextWithEllipsis(context, BaritoneDependencyChecker.DOWNLOAD_URL, centerX, messageY + 30, maxCenteredWidth, getPopupAnimatedColor(missingBaritonePopupAnimation, UITheme.LINK_COLOR));
 
         int buttonWidth = 100;
@@ -3502,14 +3500,14 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean copyHovered = isPointInRect(mouseX, mouseY, copyX, buttonY, buttonWidth, buttonHeight);
         boolean closeHovered = isPointInRect(mouseX, mouseY, closeX, buttonY, buttonWidth, buttonHeight);
 
-        drawPopupButton(context, openX, buttonY, buttonWidth, buttonHeight, openHovered, Text.translatable("pathmind.button.openLink"), PopupButtonStyle.PRIMARY, missingBaritonePopupAnimation);
-        drawPopupButton(context, copyX, buttonY, buttonWidth, buttonHeight, copyHovered, Text.translatable("pathmind.button.copyLink"), PopupButtonStyle.PRIMARY, missingBaritonePopupAnimation);
-        drawPopupButton(context, closeX, buttonY, buttonWidth, buttonHeight, closeHovered, Text.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, missingBaritonePopupAnimation);
+        drawPopupButton(context, openX, buttonY, buttonWidth, buttonHeight, openHovered, Component.translatable("pathmind.button.openLink"), PopupButtonStyle.PRIMARY, missingBaritonePopupAnimation);
+        drawPopupButton(context, copyX, buttonY, buttonWidth, buttonHeight, copyHovered, Component.translatable("pathmind.button.copyLink"), PopupButtonStyle.PRIMARY, missingBaritonePopupAnimation);
+        drawPopupButton(context, closeX, buttonY, buttonWidth, buttonHeight, closeHovered, Component.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, missingBaritonePopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderMissingUiUtilsPopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderMissingUiUtilsPopup(GuiGraphics context, int mouseX, int mouseY) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, missingUiUtilsPopupAnimation.getPopupAlpha());
 
         int popupWidth = MISSING_UI_UTILS_POPUP_WIDTH;
@@ -3527,8 +3525,8 @@ public class PathmindVisualEditorScreen extends Screen {
         int centerX = popupX + scaledWidth / 2;
         int messageY = popupY + 16;
         int maxCenteredWidth = scaledWidth - 40;
-        drawPopupCenteredTextWithEllipsis(context, Text.translatable("pathmind.popup.missingUiUtils.title").getString(), centerX, messageY, maxCenteredWidth, getPopupAnimatedColor(missingUiUtilsPopupAnimation, UITheme.TEXT_PRIMARY));
-        drawPopupCenteredTextWithEllipsis(context, Text.translatable("pathmind.popup.missingUiUtils.message").getString(), centerX, messageY + 16, maxCenteredWidth, getPopupAnimatedColor(missingUiUtilsPopupAnimation, UITheme.TEXT_PRIMARY));
+        drawPopupCenteredTextWithEllipsis(context, Component.translatable("pathmind.popup.missingUiUtils.title").getString(), centerX, messageY, maxCenteredWidth, getPopupAnimatedColor(missingUiUtilsPopupAnimation, UITheme.TEXT_PRIMARY));
+        drawPopupCenteredTextWithEllipsis(context, Component.translatable("pathmind.popup.missingUiUtils.message").getString(), centerX, messageY + 16, maxCenteredWidth, getPopupAnimatedColor(missingUiUtilsPopupAnimation, UITheme.TEXT_PRIMARY));
         drawPopupCenteredTextWithEllipsis(context, UI_UTILS_DOWNLOAD_URL, centerX, messageY + 30, maxCenteredWidth, getPopupAnimatedColor(missingUiUtilsPopupAnimation, UITheme.LINK_COLOR));
 
         int buttonWidth = 100;
@@ -3545,25 +3543,25 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean copyHovered = isPointInRect(mouseX, mouseY, copyX, buttonY, buttonWidth, buttonHeight);
         boolean closeHovered = isPointInRect(mouseX, mouseY, closeX, buttonY, buttonWidth, buttonHeight);
 
-        drawPopupButton(context, openX, buttonY, buttonWidth, buttonHeight, openHovered, Text.translatable("pathmind.button.openLink"), PopupButtonStyle.PRIMARY, missingUiUtilsPopupAnimation);
-        drawPopupButton(context, copyX, buttonY, buttonWidth, buttonHeight, copyHovered, Text.translatable("pathmind.button.copyLink"), PopupButtonStyle.PRIMARY, missingUiUtilsPopupAnimation);
-        drawPopupButton(context, closeX, buttonY, buttonWidth, buttonHeight, closeHovered, Text.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, missingUiUtilsPopupAnimation);
+        drawPopupButton(context, openX, buttonY, buttonWidth, buttonHeight, openHovered, Component.translatable("pathmind.button.openLink"), PopupButtonStyle.PRIMARY, missingUiUtilsPopupAnimation);
+        drawPopupButton(context, copyX, buttonY, buttonWidth, buttonHeight, copyHovered, Component.translatable("pathmind.button.copyLink"), PopupButtonStyle.PRIMARY, missingUiUtilsPopupAnimation);
+        drawPopupButton(context, closeX, buttonY, buttonWidth, buttonHeight, closeHovered, Component.translatable("pathmind.button.close"), PopupButtonStyle.DEFAULT, missingUiUtilsPopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void drawTitle(DrawContext context, int mouseX, int mouseY, float underlineProgress) {
-        int textWidth = this.textRenderer.getWidth(TITLE_TEXT);
+    private void drawTitle(GuiGraphics context, int mouseX, int mouseY, float underlineProgress) {
+        int textWidth = this.font.width(TITLE_TEXT);
         int textX = getTitleTextX();
         int centerX = textX + textWidth / 2;
         int textY = getTitleTextY();
-        context.drawCenteredTextWithShadow(this.textRenderer, TITLE_TEXT, centerX, textY, UITheme.TEXT_PRIMARY);
+        context.drawCenteredString(this.font, TITLE_TEXT, centerX, textY, UITheme.TEXT_PRIMARY);
 
         if (underlineProgress > 0.001f) {
             int underlineWidth = Math.round(textWidth * underlineProgress);
             if (underlineWidth > 0) {
                 int underlineStartX = centerX - underlineWidth / 2;
-                int underlineY = textY + this.textRenderer.fontHeight;
+                int underlineY = textY + this.font.lineHeight;
                 context.fill(underlineStartX, underlineY, underlineStartX + underlineWidth, underlineY + 1, UITheme.TEXT_PRIMARY);
             }
         }
@@ -3571,7 +3569,7 @@ public class PathmindVisualEditorScreen extends Screen {
         renderPresetBrowserButton(context, mouseX, mouseY);
     }
 
-    private void renderPresetBrowserButton(DrawContext context, int mouseX, int mouseY) {
+    private void renderPresetBrowserButton(GuiGraphics context, int mouseX, int mouseY) {
         int buttonX = getPresetBrowserButtonX();
         int buttonY = getPresetBrowserButtonY();
         boolean hovered = isPresetBrowserButtonHovered(mouseX, mouseY);
@@ -3587,28 +3585,28 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
-    private void drawPopupTextWithEllipsis(DrawContext context, String text, int x, int y, int maxWidth, int color) {
-        String display = trimWithEllipsis(this.textRenderer, text, maxWidth);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(display), x, y, color);
+    private void drawPopupTextWithEllipsis(GuiGraphics context, String text, int x, int y, int maxWidth, int color) {
+        String display = trimWithEllipsis(this.font, text, maxWidth);
+        context.drawString(this.font, Component.literal(display), x, y, color);
     }
 
-    private void drawPopupCenteredTextWithEllipsis(DrawContext context, String text, int centerX, int y, int maxWidth, int color) {
-        String display = trimWithEllipsis(this.textRenderer, text, maxWidth);
-        context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(display), centerX, y, color);
+    private void drawPopupCenteredTextWithEllipsis(GuiGraphics context, String text, int centerX, int y, int maxWidth, int color) {
+        String display = trimWithEllipsis(this.font, text, maxWidth);
+        context.drawCenteredString(this.font, Component.literal(display), centerX, y, color);
     }
 
-    private String trimWithEllipsis(TextRenderer renderer, String text, int availableWidth) {
+    private String trimWithEllipsis(Font renderer, String text, int availableWidth) {
         return TextRenderUtil.trimWithEllipsis(renderer, text, availableWidth);
     }
 
-    private boolean enablePopupScissor(DrawContext context, int popupX, int popupY, int scaledWidth, int scaledHeight) {
+    private boolean enablePopupScissor(GuiGraphics context, int popupX, int popupY, int scaledWidth, int scaledHeight) {
         int width = Math.max(1, scaledWidth);
         int height = Math.max(1, scaledHeight);
         context.enableScissor(popupX, popupY, popupX + width, popupY + height);
         return true;
     }
 
-    private void disablePopupScissor(DrawContext context, boolean enabled) {
+    private void disablePopupScissor(GuiGraphics context, boolean enabled) {
         if (enabled) {
             DrawContextBridge.flush(context);
             DrawContextBridge.flush(context);
@@ -3765,22 +3763,22 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void openBaritoneDownloadLink() {
-        Util.getOperatingSystem().open(BaritoneDependencyChecker.DOWNLOAD_URL);
+        Util.getPlatform().openUri(BaritoneDependencyChecker.DOWNLOAD_URL);
     }
 
     private void copyBaritoneDownloadLink() {
-        if (this.client != null && this.client.keyboard != null) {
-            this.client.keyboard.setClipboard(BaritoneDependencyChecker.DOWNLOAD_URL);
+        if (this.minecraft != null && this.minecraft.keyboardHandler != null) {
+            this.minecraft.keyboardHandler.setClipboard(BaritoneDependencyChecker.DOWNLOAD_URL);
         }
     }
 
     private void openUiUtilsDownloadLink() {
-        Util.getOperatingSystem().open(UI_UTILS_DOWNLOAD_URL);
+        Util.getPlatform().openUri(UI_UTILS_DOWNLOAD_URL);
     }
 
     private void copyUiUtilsDownloadLink() {
-        if (this.client != null && this.client.keyboard != null) {
-            this.client.keyboard.setClipboard(UI_UTILS_DOWNLOAD_URL);
+        if (this.minecraft != null && this.minecraft.keyboardHandler != null) {
+            this.minecraft.keyboardHandler.setClipboard(UI_UTILS_DOWNLOAD_URL);
         }
     }
 
@@ -3814,17 +3812,17 @@ public class PathmindVisualEditorScreen extends Screen {
         return true;
     }
 
-    private void drawPopupButton(DrawContext context, int x, int y, int width, int height, boolean hovered, Text label, boolean primary) {
+    private void drawPopupButton(GuiGraphics context, int x, int y, int width, int height, boolean hovered, Component label, boolean primary) {
         PopupButtonStyle style = primary ? PopupButtonStyle.PRIMARY : PopupButtonStyle.DEFAULT;
         drawPopupButton(context, x, y, width, height, hovered, label, style);
     }
 
-    private void drawPopupButton(DrawContext context, int x, int y, int width, int height, boolean hovered, Text label, PopupButtonStyle style) {
+    private void drawPopupButton(GuiGraphics context, int x, int y, int width, int height, boolean hovered, Component label, PopupButtonStyle style) {
         drawPopupButton(context, x, y, width, height, hovered, label, style, null);
     }
 
-    private void drawPopupButton(DrawContext context, int x, int y, int width, int height, boolean hovered,
-                                 Text label, PopupButtonStyle style, PopupAnimationHandler animation) {
+    private void drawPopupButton(GuiGraphics context, int x, int y, int width, int height, boolean hovered,
+                                 Component label, PopupButtonStyle style, PopupAnimationHandler animation) {
         float hoverProgress = getHoverProgress("popup-button:" + style + ":" + label.getString() + ":" + x + ":" + y + ":" + width + ":" + height, hovered);
         UIStyleHelper.TextButtonPalette palette = UIStyleHelper.getTextButtonPalette(mapPopupButtonStyle(style), getAccentColor(), hoverProgress, false);
         int adjustedBg = getPopupAnimatedColor(animation, palette.backgroundColor());
@@ -3832,11 +3830,11 @@ public class PathmindVisualEditorScreen extends Screen {
         int adjustedInnerBorder = getPopupAnimatedColor(animation, palette.innerBorderColor());
         int adjustedText = getPopupAnimatedColor(animation, palette.textColor());
         UIStyleHelper.drawBeveledPanel(context, x, y, width, height, adjustedBg, adjustedBorder, adjustedInnerBorder);
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
+        context.drawCenteredString(
+            this.font,
             label,
             x + width / 2,
-            y + (height - this.textRenderer.fontHeight) / 2 + 1,
+            y + (height - this.font.lineHeight) / 2 + 1,
             adjustedText
         );
     }
@@ -3849,7 +3847,7 @@ public class PathmindVisualEditorScreen extends Screen {
         };
     }
 
-    private void drawPopupContainer(DrawContext context, int x, int y, int width, int height, PopupAnimationHandler animation) {
+    private void drawPopupContainer(GuiGraphics context, int x, int y, int width, int height, PopupAnimationHandler animation) {
         UIStyleHelper.drawBeveledPanel(
             context,
             x,
@@ -3862,7 +3860,7 @@ public class PathmindVisualEditorScreen extends Screen {
         );
     }
 
-    private void drawPopupInputFrame(DrawContext context, int x, int y, int width, int height, int borderColor, PopupAnimationHandler animation) {
+    private void drawPopupInputFrame(GuiGraphics context, int x, int y, int width, int height, int borderColor, PopupAnimationHandler animation) {
         UIStyleHelper.drawFieldFrame(context, x, y, width, height, new UIStyleHelper.FieldPalette(
             getPopupAnimatedColor(animation, UITheme.RENAME_INPUT_BG),
             getPopupAnimatedColor(animation, borderColor),
@@ -4100,12 +4098,12 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void runOnClientThread(Runnable task) {
-        MinecraftClient minecraftClient = this.client;
+        Minecraft minecraftClient = this.minecraft;
         if (minecraftClient == null || task == null) {
             return;
         }
         minecraftClient.execute(() -> {
-            if (this.client == null) {
+            if (this.minecraft == null) {
                 return;
             }
             task.run();
@@ -4245,7 +4243,7 @@ public class PathmindVisualEditorScreen extends Screen {
         bookTextEditorOverlay.show();
     }
 
-    private void renderPlayButton(DrawContext context, int mouseX, int mouseY, boolean disabled) {
+    private void renderPlayButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
         int buttonX = getPlayButtonX();
         int buttonY = getPlayButtonY();
         boolean hovered = !disabled && isPointInRect(mouseX, mouseY, buttonX, buttonY, PLAY_BUTTON_SIZE, PLAY_BUTTON_SIZE);
@@ -4274,7 +4272,7 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPlayIcon(context, buttonX, buttonY, iconColor);
     }
 
-    private void drawPlayIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawPlayIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int triangleSize = Math.max(5, Math.min(PLAY_BUTTON_SIZE - 12, 7));
         int startX = buttonX + (PLAY_BUTTON_SIZE - triangleSize) / 2;
         int startY = buttonY + (PLAY_BUTTON_SIZE - triangleSize) / 2;
@@ -4284,12 +4282,12 @@ public class PathmindVisualEditorScreen extends Screen {
             int lineStartX = Math.max(startX + row / 2, buttonX + 2);
             int lineEndX = Math.min(startX + triangleSize - 1, buttonX + PLAY_BUTTON_SIZE - 3);
             if (lineStartX <= lineEndX && lineY >= buttonY + 2 && lineY <= buttonY + PLAY_BUTTON_SIZE - 3) {
-                context.drawHorizontalLine(lineStartX, lineEndX, lineY, color);
+                context.hLine(lineStartX, lineEndX, lineY, color);
             }
         }
     }
 
-    private void renderStopButton(DrawContext context, int mouseX, int mouseY, boolean disabled) {
+    private void renderStopButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
         int buttonX = getStopButtonX();
         int buttonY = getStopButtonY();
         boolean hovered = !disabled && isPointInRect(mouseX, mouseY, buttonX, buttonY, STOP_BUTTON_SIZE, STOP_BUTTON_SIZE);
@@ -4319,14 +4317,14 @@ public class PathmindVisualEditorScreen extends Screen {
         drawStopIcon(context, buttonX, buttonY, iconColor);
     }
 
-    private void drawStopIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawStopIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int squareSize = Math.max(6, STOP_BUTTON_SIZE - 10);
         int left = buttonX + (STOP_BUTTON_SIZE - squareSize) / 2;
         int top = buttonY + (STOP_BUTTON_SIZE - squareSize) / 2;
         context.fill(left, top, left + squareSize, top + squareSize, color);
     }
 
-    private void renderPresetDropdown(DrawContext context, int mouseX, int mouseY, boolean disabled) {
+    private void renderPresetDropdown(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
         int dropdownX = getPresetDropdownX();
         int dropdownY = getPresetDropdownY();
 
@@ -4347,7 +4345,7 @@ public class PathmindVisualEditorScreen extends Screen {
         int optionStartY = dropdownY;
         int optionCount = availablePresets.size() + 1;
         DropdownLayoutHelper.Layout layout = getPresetDropdownLayout(optionStartY);
-        presetDropdownScrollOffset = MathHelper.clamp(presetDropdownScrollOffset, 0, layout.maxScrollOffset);
+        presetDropdownScrollOffset = Mth.clamp(presetDropdownScrollOffset, 0, layout.maxScrollOffset);
         int fullOptionsHeight = layout.height;
         int animatedHeight = (int) (fullOptionsHeight * animProgress);
 
@@ -4374,8 +4372,8 @@ public class PathmindVisualEditorScreen extends Screen {
                         + PRESET_RENAME_ICON_SIZE
                         + PRESET_TEXT_ICON_GAP;
                 int textMaxWidth = PRESET_DROPDOWN_WIDTH - PRESET_TEXT_LEFT_PADDING - iconSpace;
-                String presetLabel = TextRenderUtil.trimWithEllipsis(this.textRenderer, preset, textMaxWidth);
-                context.drawTextWithShadow(this.textRenderer, Text.literal(presetLabel), textX, optionY + 5, textColor);
+                String presetLabel = TextRenderUtil.trimWithEllipsis(this.font, preset, textMaxWidth);
+                context.drawString(this.font, Component.literal(presetLabel), textX, optionY + 5, textColor);
 
                 boolean renameDisabled = isPresetRenameDisabled(preset);
                 int renameLeft = getPresetRenameIconLeft(dropdownX);
@@ -4421,13 +4419,13 @@ public class PathmindVisualEditorScreen extends Screen {
                 }
                 drawTrashIcon(context, deleteLeft, deleteTop, deleteColor);
             } else {
-                context.drawHorizontalLine(dropdownX + 1, dropdownX + PRESET_DROPDOWN_WIDTH - 2, optionY, UITheme.BORDER_SUBTLE);
+                context.hLine(dropdownX + 1, dropdownX + PRESET_DROPDOWN_WIDTH - 2, optionY, UITheme.BORDER_SUBTLE);
                 boolean createHovered = animProgress >= 1f && isPointInRect(mouseX, mouseY, dropdownX + 1, optionY + 1, PRESET_DROPDOWN_WIDTH - 2, PRESET_OPTION_HEIGHT - 1);
                 UIStyleHelper.DropdownRowPalette createPalette = UIStyleHelper.getDropdownRowPalette(getAccentColor(), createHovered ? 1f : 0f, false, false);
                 UIStyleHelper.drawDropdownRow(context, dropdownX + 1, optionY + 1, PRESET_DROPDOWN_WIDTH - 2, PRESET_OPTION_HEIGHT - 1, createPalette);
                 int createTextWidth = PRESET_DROPDOWN_WIDTH - PRESET_TEXT_LEFT_PADDING * 2;
-                String createLabel = TextRenderUtil.trimWithEllipsis(this.textRenderer, "+ Create new preset", createTextWidth);
-                context.drawTextWithShadow(this.textRenderer, Text.literal(createLabel), dropdownX + PRESET_TEXT_LEFT_PADDING, optionY + 5, getAccentColor());
+                String createLabel = TextRenderUtil.trimWithEllipsis(this.font, "+ Create new preset", createTextWidth);
+                context.drawString(this.font, Component.literal(createLabel), dropdownX + PRESET_TEXT_LEFT_PADDING, optionY + 5, getAccentColor());
             }
         }
 
@@ -4460,7 +4458,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private int getPresetDropdownX() {
         int preferredX = getPresetBrowserButtonX() + PRESET_BROWSER_BUTTON_SIZE - PRESET_DROPDOWN_WIDTH;
-        return MathHelper.clamp(preferredX, PRESET_DROPDOWN_MARGIN, this.width - PRESET_DROPDOWN_WIDTH - PRESET_DROPDOWN_MARGIN);
+        return Mth.clamp(preferredX, PRESET_DROPDOWN_MARGIN, this.width - PRESET_DROPDOWN_WIDTH - PRESET_DROPDOWN_MARGIN);
     }
 
     private int getPresetDropdownY() {
@@ -4575,7 +4573,7 @@ public class PathmindVisualEditorScreen extends Screen {
         int dropdownX = getPresetDropdownX();
         int optionStartY = getPresetDropdownY();
         DropdownLayoutHelper.Layout layout = getPresetDropdownLayout(optionStartY);
-        presetDropdownScrollOffset = MathHelper.clamp(presetDropdownScrollOffset, 0, layout.maxScrollOffset);
+        presetDropdownScrollOffset = Mth.clamp(presetDropdownScrollOffset, 0, layout.maxScrollOffset);
         int optionsHeight = layout.height;
         if (!isPointInRect((int) mouseX, (int) mouseY, dropdownX, optionStartY, PRESET_DROPDOWN_WIDTH, optionsHeight)) {
             return false;
@@ -4623,7 +4621,7 @@ public class PathmindVisualEditorScreen extends Screen {
         closeRenamePresetPopup();
         createPresetPopupAnimation.show();
         if (createPresetField != null) {
-            createPresetField.setText("");
+            createPresetField.setValue("");
             createPresetField.setVisible(true);
             createPresetField.setEditable(true);
             createPresetField.setFocused(true);
@@ -4652,7 +4650,7 @@ public class PathmindVisualEditorScreen extends Screen {
         pendingPresetRenameName = presetName;
         renamePresetPopupAnimation.show();
         if (renamePresetField != null) {
-            renamePresetField.setText(presetName);
+            renamePresetField.setValue(presetName);
             renamePresetField.setVisible(true);
             renamePresetField.setEditable(true);
             renamePresetField.setFocused(true);
@@ -4673,8 +4671,8 @@ public class PathmindVisualEditorScreen extends Screen {
     private void openNodeSearch(int anchorX, int anchorY) {
         int minX = sidebar.getWidth() + 8;
         int maxX = this.width - NODE_SEARCH_FIELD_WIDTH - 8;
-        nodeSearchFieldX = MathHelper.clamp(anchorX, minX, Math.max(minX, maxX));
-        nodeSearchFieldY = MathHelper.clamp(anchorY, TITLE_BAR_HEIGHT + 8,
+        nodeSearchFieldX = Mth.clamp(anchorX, minX, Math.max(minX, maxX));
+        nodeSearchFieldY = Mth.clamp(anchorY, TITLE_BAR_HEIGHT + 8,
             Math.max(TITLE_BAR_HEIGHT + 8, this.height - NODE_SEARCH_FIELD_HEIGHT - 8));
         nodeSearchWorldX = nodeGraph.screenToWorldX(nodeSearchFieldX);
         nodeSearchWorldY = nodeGraph.screenToWorldY(nodeSearchFieldY);
@@ -4683,7 +4681,7 @@ public class PathmindVisualEditorScreen extends Screen {
         if (nodeSearchField != null) {
             nodeSearchField.setX(nodeSearchFieldX);
             nodeSearchField.setY(nodeSearchFieldY);
-            nodeSearchField.setText("");
+            nodeSearchField.setValue("");
             nodeSearchField.setVisible(true);
             nodeSearchField.setEditable(true);
             nodeSearchField.setFocused(true);
@@ -4709,12 +4707,12 @@ public class PathmindVisualEditorScreen extends Screen {
         if (!nodeSearchOpen || nodeSearchField == null) {
             return;
         }
-        String query = nodeSearchField.getText();
+        String query = nodeSearchField.getValue();
         nodeSearchField.setSuggestion(null);
         refreshNodeSearchResults(query);
     }
 
-    private void renderNodeSearchField(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderNodeSearchField(GuiGraphics context, int mouseX, int mouseY, float delta) {
         if (!nodeSearchOpen || nodeSearchField == null) {
             return;
         }
@@ -4722,7 +4720,7 @@ public class PathmindVisualEditorScreen extends Screen {
         updateNodeSearchLayout();
         int transformedMouseX = toNodeSearchSpaceX(mouseX);
         int transformedMouseY = toNodeSearchSpaceY(mouseY);
-        var matrices = context.getMatrices();
+        var matrices = context.pose();
         MatrixStackBridge.push(matrices);
         MatrixStackBridge.translate(matrices, nodeSearchFieldX, nodeSearchFieldY);
         MatrixStackBridge.scale(matrices, nodeSearchScale, nodeSearchScale);
@@ -4836,7 +4834,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return Math.max(1, score - Math.max(0, candidate.length() - query.length()));
     }
 
-    private void renderNodeSearchDropdown(DrawContext context, int mouseX, int mouseY) {
+    private void renderNodeSearchDropdown(GuiGraphics context, int mouseX, int mouseY) {
         if (nodeSearchResults.isEmpty()) {
             return;
         }
@@ -4860,24 +4858,24 @@ public class PathmindVisualEditorScreen extends Screen {
             if (selected) {
                 UIStyleHelper.drawDropdownRow(context, listX + 1, rowTop, listWidth - 2, NODE_SEARCH_RESULT_HEIGHT, rowPalette);
             }
-            int textY = rowTop + Math.max(0, (NODE_SEARCH_RESULT_HEIGHT - this.textRenderer.fontHeight) / 2);
+            int textY = rowTop + Math.max(0, (NODE_SEARCH_RESULT_HEIGHT - this.font.lineHeight) / 2);
             String label = trimToWidth(result.label, listWidth - (NODE_SEARCH_RESULT_TEXT_PADDING * 2) - 42);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(label), listX + NODE_SEARCH_RESULT_TEXT_PADDING, textY, selected ? rowPalette.textColor() : UITheme.TEXT_PRIMARY);
+            context.drawString(this.font, Component.literal(label), listX + NODE_SEARCH_RESULT_TEXT_PADDING, textY, selected ? rowPalette.textColor() : UITheme.TEXT_PRIMARY);
             String category = trimToWidth(result.categoryLabel, 36);
-            int categoryWidth = this.textRenderer.getWidth(category);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(category),
+            int categoryWidth = this.font.width(category);
+            context.drawString(this.font, Component.literal(category),
                 listX + listWidth - NODE_SEARCH_RESULT_TEXT_PADDING - categoryWidth, textY, UITheme.TEXT_TERTIARY);
         }
     }
 
     private String trimToWidth(String value, int maxWidth) {
-        if (value == null || value.isEmpty() || this.textRenderer == null || maxWidth <= 0) {
+        if (value == null || value.isEmpty() || this.font == null || maxWidth <= 0) {
             return value == null ? "" : value;
         }
-        if (this.textRenderer.getWidth(value) <= maxWidth) {
+        if (this.font.width(value) <= maxWidth) {
             return value;
         }
-        return this.textRenderer.trimToWidth(value, Math.max(0, maxWidth - this.textRenderer.getWidth("..."))) + "...";
+        return this.font.plainSubstrByWidth(value, Math.max(0, maxWidth - this.font.width("..."))) + "...";
     }
 
     private boolean isPointInNodeSearchField(int mouseX, int mouseY) {
@@ -4921,8 +4919,8 @@ public class PathmindVisualEditorScreen extends Screen {
         int scaledHeight = Math.max(1, Math.round(NODE_SEARCH_FIELD_HEIGHT * nodeSearchScale));
         int maxX = Math.max(minX, this.width - scaledWidth - 8);
         int maxY = Math.max(minY, this.height - scaledHeight - 8);
-        nodeSearchFieldX = MathHelper.clamp(nodeGraph.worldToScreenX(nodeSearchWorldX), minX, maxX);
-        nodeSearchFieldY = MathHelper.clamp(nodeGraph.worldToScreenY(nodeSearchWorldY), minY, maxY);
+        nodeSearchFieldX = Mth.clamp(nodeGraph.worldToScreenX(nodeSearchWorldX), minX, maxX);
+        nodeSearchFieldY = Mth.clamp(nodeGraph.worldToScreenY(nodeSearchWorldY), minY, maxY);
     }
 
     private int toNodeSearchSpaceX(int mouseX) {
@@ -4958,7 +4956,7 @@ public class PathmindVisualEditorScreen extends Screen {
             nodeSearchHoverIndex = 0;
             return;
         }
-        nodeSearchHoverIndex = MathHelper.clamp(nodeSearchHoverIndex + direction, 0, nodeSearchResults.size() - 1);
+        nodeSearchHoverIndex = Mth.clamp(nodeSearchHoverIndex + direction, 0, nodeSearchResults.size() - 1);
     }
 
     private void selectNodeSearchResult(NodeSearchResult result) {
@@ -4972,15 +4970,15 @@ public class PathmindVisualEditorScreen extends Screen {
         closeNodeSearch();
     }
 
-    private void drawNodeSearchIcon(DrawContext context, int x, int y, int color) {
-        context.drawHorizontalLine(x + 1, x + 3, y, color);
-        context.drawHorizontalLine(x, x + 4, y + 1, color);
-        context.drawVerticalLine(x, y + 2, y + 4, color);
-        context.drawVerticalLine(x + 4, y + 2, y + 4, color);
-        context.drawHorizontalLine(x + 1, x + 3, y + 5, color);
-        context.drawHorizontalLine(x + 5, x + 6, y + 5, color);
-        context.drawHorizontalLine(x + 6, x + 7, y + 6, color);
-        context.drawHorizontalLine(x + 7, x + 8, y + 7, color);
+    private void drawNodeSearchIcon(GuiGraphics context, int x, int y, int color) {
+        context.hLine(x + 1, x + 3, y, color);
+        context.hLine(x, x + 4, y + 1, color);
+        context.vLine(x, y + 2, y + 4, color);
+        context.vLine(x + 4, y + 2, y + 4, color);
+        context.hLine(x + 1, x + 3, y + 5, color);
+        context.hLine(x + 5, x + 6, y + 5, color);
+        context.hLine(x + 6, x + 7, y + 6, color);
+        context.hLine(x + 7, x + 8, y + 7, color);
     }
 
     private boolean handleCreatePresetPopupClick(double mouseX, double mouseY, int button) {
@@ -5074,7 +5072,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return true;
     }
 
-    private void renderCreatePresetPopup(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderCreatePresetPopup(GuiGraphics context, int mouseX, int mouseY, float delta) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, createPresetPopupAnimation.getPopupAlpha());
 
         int popupWidth = CREATE_PRESET_POPUP_WIDTH;
@@ -5089,9 +5087,9 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, createPresetPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
-            Text.translatable("pathmind.popup.createPreset.title"),
+        context.drawCenteredString(
+            this.font,
+            Component.translatable("pathmind.popup.createPreset.title"),
             popupX + scaledWidth / 2,
             popupY + 14,
             getPopupAnimatedColor(createPresetPopupAnimation, UITheme.TEXT_PRIMARY)
@@ -5099,7 +5097,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
         drawPopupTextWithEllipsis(
             context,
-            Text.translatable("pathmind.popup.createPreset.message").getString(),
+            Component.translatable("pathmind.popup.createPreset.message").getString(),
             popupX + 20,
             popupY + 44,
             scaledWidth - 40,
@@ -5136,8 +5134,8 @@ public class PathmindVisualEditorScreen extends Screen {
             createPresetField.setEditable(true);
             int textColor = getPopupAnimatedColor(createPresetPopupAnimation, UITheme.TEXT_PRIMARY);
             int textDisabledColor = getPopupAnimatedColor(createPresetPopupAnimation, UITheme.TEXT_TERTIARY);
-            createPresetField.setEditableColor(textColor);
-            createPresetField.setUneditableColor(textDisabledColor);
+            createPresetField.setTextColor(textColor);
+            createPresetField.setTextColorUneditable(textDisabledColor);
             int textFieldHeight = Math.max(10, fieldHeight - TEXT_FIELD_VERTICAL_PADDING * 2);
             createPresetField.setPosition(fieldX + 4, fieldY + TEXT_FIELD_VERTICAL_PADDING);
             createPresetField.setWidth(fieldWidth - 8);
@@ -5172,7 +5170,7 @@ public class PathmindVisualEditorScreen extends Screen {
             buttonWidth,
             buttonHeight,
             cancelHovered,
-            Text.translatable("pathmind.button.cancel"),
+            Component.translatable("pathmind.button.cancel"),
             PopupButtonStyle.DEFAULT,
             createPresetPopupAnimation
         );
@@ -5183,7 +5181,7 @@ public class PathmindVisualEditorScreen extends Screen {
             buttonWidth,
             buttonHeight,
             createHovered,
-            Text.translatable("pathmind.button.create"),
+            Component.translatable("pathmind.button.create"),
             PopupButtonStyle.PRIMARY,
             createPresetPopupAnimation
         );
@@ -5191,7 +5189,7 @@ public class PathmindVisualEditorScreen extends Screen {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderRenamePresetPopup(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderRenamePresetPopup(GuiGraphics context, int mouseX, int mouseY, float delta) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, renamePresetPopupAnimation.getPopupAlpha());
 
         int popupWidth = CREATE_PRESET_POPUP_WIDTH;
@@ -5206,18 +5204,18 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, renamePresetPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-                this.textRenderer,
-                Text.translatable("pathmind.popup.renamePreset.title"),
+        context.drawCenteredString(
+                this.font,
+                Component.translatable("pathmind.popup.renamePreset.title"),
                 popupX + scaledWidth / 2,
                 popupY + 14,
                 UITheme.TEXT_PRIMARY
         );
 
         String presetLabel = pendingPresetRenameName == null || pendingPresetRenameName.isEmpty()
-                ? Text.translatable("pathmind.popup.preset.fallbackSelected").getString()
-                : Text.translatable("pathmind.popup.preset.label", pendingPresetRenameName).getString();
-        drawPopupTextWithEllipsis(context, Text.translatable("pathmind.popup.renamePreset.message").getString(), popupX + 20, popupY + 44, scaledWidth - 40, UITheme.TEXT_SECONDARY);
+                ? Component.translatable("pathmind.popup.preset.fallbackSelected").getString()
+                : Component.translatable("pathmind.popup.preset.label", pendingPresetRenameName).getString();
+        drawPopupTextWithEllipsis(context, Component.translatable("pathmind.popup.renamePreset.message").getString(), popupX + 20, popupY + 44, scaledWidth - 40, UITheme.TEXT_SECONDARY);
         drawPopupTextWithEllipsis(context, presetLabel, popupX + 20, popupY + 58, scaledWidth - 40, UITheme.TEXT_SECONDARY);
 
         int fieldX = popupX + 20;
@@ -5260,13 +5258,13 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean cancelHovered = isPointInRect(mouseX, mouseY, cancelX, buttonY, buttonWidth, buttonHeight);
         boolean renameHovered = isPointInRect(mouseX, mouseY, renameX, buttonY, buttonWidth, buttonHeight);
 
-        drawPopupButton(context, cancelX, buttonY, buttonWidth, buttonHeight, cancelHovered, Text.translatable("pathmind.button.cancel"), false);
-        drawPopupButton(context, renameX, buttonY, buttonWidth, buttonHeight, renameHovered, Text.translatable("pathmind.button.rename"), true);
+        drawPopupButton(context, cancelX, buttonY, buttonWidth, buttonHeight, cancelHovered, Component.translatable("pathmind.button.cancel"), false);
+        drawPopupButton(context, renameX, buttonY, buttonWidth, buttonHeight, renameHovered, Component.translatable("pathmind.button.rename"), true);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void renderPresetDeletePopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderPresetDeletePopup(GuiGraphics context, int mouseX, int mouseY) {
         RenderStateBridge.setShaderColor(1f, 1f, 1f, presetDeletePopupAnimation.getPopupAlpha());
 
         int popupWidth = PRESET_DELETE_POPUP_WIDTH;
@@ -5281,9 +5279,9 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, presetDeletePopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
-            Text.translatable("pathmind.popup.deletePreset.title"),
+        context.drawCenteredString(
+            this.font,
+            Component.translatable("pathmind.popup.deletePreset.title"),
             popupX + scaledWidth / 2,
             popupY + 14,
             getPopupAnimatedColor(presetDeletePopupAnimation, UITheme.TEXT_PRIMARY)
@@ -5291,9 +5289,9 @@ public class PathmindVisualEditorScreen extends Screen {
 
         String presetLabel = (pendingPresetDeletionName != null && !pendingPresetDeletionName.isEmpty())
                 ? pendingPresetDeletionName
-                : Text.translatable("pathmind.popup.preset.fallbackCurrent").getString();
-        String warningLine = Text.translatable("pathmind.popup.deletePreset.message").getString();
-        String presetLine = Text.translatable("pathmind.popup.preset.label", presetLabel).getString();
+                : Component.translatable("pathmind.popup.preset.fallbackCurrent").getString();
+        String warningLine = Component.translatable("pathmind.popup.deletePreset.message").getString();
+        String presetLine = Component.translatable("pathmind.popup.preset.label", presetLabel).getString();
         drawPopupTextWithEllipsis(context, warningLine, popupX + 20, popupY + 48, scaledWidth - 40,
             getPopupAnimatedColor(presetDeletePopupAnimation, UITheme.TEXT_SECONDARY));
         drawPopupTextWithEllipsis(context, presetLine, popupX + 20, popupY + 64, scaledWidth - 40,
@@ -5328,9 +5326,9 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean deleteHovered = isPointInRect(mouseX, mouseY, deleteX, buttonY, buttonWidth, buttonHeight);
 
         drawPopupButton(context, cancelX, buttonY, buttonWidth, buttonHeight, cancelHovered,
-            Text.translatable("pathmind.button.cancel"), PopupButtonStyle.DEFAULT, presetDeletePopupAnimation);
+            Component.translatable("pathmind.button.cancel"), PopupButtonStyle.DEFAULT, presetDeletePopupAnimation);
         drawPopupButton(context, deleteX, buttonY, buttonWidth, buttonHeight, deleteHovered,
-            Text.translatable("pathmind.button.delete"), PopupButtonStyle.PRIMARY, presetDeletePopupAnimation);
+            Component.translatable("pathmind.button.delete"), PopupButtonStyle.PRIMARY, presetDeletePopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
@@ -5340,7 +5338,7 @@ public class PathmindVisualEditorScreen extends Screen {
             return;
         }
 
-        String desiredName = createPresetField.getText();
+        String desiredName = createPresetField.getValue();
         if (desiredName == null || desiredName.trim().isEmpty()) {
             setCreatePresetStatus("Enter a preset name.", UITheme.STATE_ERROR);
             return;
@@ -5366,7 +5364,7 @@ public class PathmindVisualEditorScreen extends Screen {
             return;
         }
 
-        String desiredName = renamePresetField.getText();
+        String desiredName = renamePresetField.getValue();
         if (desiredName == null || desiredName.trim().isEmpty()) {
             setRenamePresetStatus("Enter a preset name.", UITheme.STATE_ERROR);
             return;
@@ -5612,7 +5610,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void openPublishPresetFlow() {
-        if (this.client == null) {
+        if (this.minecraft == null) {
             return;
         }
         nodeGraph.save();
@@ -5621,24 +5619,24 @@ public class PathmindVisualEditorScreen extends Screen {
         MarketplaceAuthManager.AuthSession cachedSession = MarketplaceAuthManager.getCachedSession().orElse(null);
         if (cachedSession != null && linkedPresetId.isPresent()) {
             MarketplaceAuthManager.ensureValidSession().whenComplete((session, sessionThrowable) -> {
-                if (this.client == null) {
+                if (this.minecraft == null) {
                     return;
                 }
-                this.client.execute(() -> {
+                this.minecraft.execute(() -> {
                     if (sessionThrowable != null || session == null) {
-                        this.client.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
+                        this.minecraft.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
                         return;
                     }
                     MarketplaceService.fetchPresetById(session.getAccessToken(), linkedPresetId.get())
                         .whenComplete((preset, throwable) -> {
-                            if (this.client == null) {
+                            if (this.minecraft == null) {
                                 return;
                             }
-                            this.client.execute(() -> {
+                            this.minecraft.execute(() -> {
                                 if (throwable == null && preset != null) {
-                                    this.client.setScreen(new PathmindMarketplaceScreen(this, false, null, preset));
+                                    this.minecraft.setScreen(new PathmindMarketplaceScreen(this, false, null, preset));
                                 } else {
-                                    this.client.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
+                                    this.minecraft.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
                                 }
                             });
                         });
@@ -5646,19 +5644,19 @@ public class PathmindVisualEditorScreen extends Screen {
             });
             return;
         }
-        this.client.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
+        this.minecraft.setScreen(new PathmindMarketplaceScreen(this, true, activePresetName));
     }
 
     void reopenPublishPresetPopup(String presetName) {
-        if (this.client == null) {
+        if (this.minecraft == null) {
             return;
         }
         nodeGraph.save();
         PresetManager.setActivePreset(activePresetName);
-        this.client.setScreen(new PathmindMarketplaceScreen(this, true, presetName));
+        this.minecraft.setScreen(new PathmindMarketplaceScreen(this, true, presetName));
     }
 
-    private void renderWorkspaceButtons(DrawContext context, int mouseX, int mouseY) {
+    private void renderWorkspaceButtons(GuiGraphics context, int mouseX, int mouseY) {
         if (isPopupObscuringWorkspace()) {
             mouseX = Integer.MIN_VALUE;
             mouseY = Integer.MIN_VALUE;
@@ -5686,20 +5684,20 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
-    private boolean renderMarketplaceButton(DrawContext context, int mouseX, int mouseY, int buttonY) {
+    private boolean renderMarketplaceButton(GuiGraphics context, int mouseX, int mouseY, int buttonY) {
         int buttonX = getMarketplaceButtonX();
         boolean hovered = isPointInRect(mouseX, mouseY, buttonX, buttonY, MARKETPLACE_BUTTON_WIDTH, BOTTOM_BUTTON_SIZE);
         drawToolbarButtonFrame(context, buttonX, buttonY, MARKETPLACE_BUTTON_WIDTH, BOTTOM_BUTTON_SIZE,
             hovered, false, false, "workspace-marketplace");
         int textColor = hovered ? getAccentColor() : UITheme.TEXT_PRIMARY;
         String label = "Marketplace";
-        int textX = buttonX + (MARKETPLACE_BUTTON_WIDTH - this.textRenderer.getWidth(label)) / 2;
-        int textY = buttonY + (BOTTOM_BUTTON_SIZE - this.textRenderer.fontHeight) / 2;
-        context.drawTextWithShadow(this.textRenderer, Text.literal(label), textX, textY, textColor);
+        int textX = buttonX + (MARKETPLACE_BUTTON_WIDTH - this.font.width(label)) / 2;
+        int textY = buttonY + (BOTTOM_BUTTON_SIZE - this.font.lineHeight) / 2;
+        context.drawString(this.font, Component.literal(label), textX, textY, textColor);
         return hovered;
     }
 
-    private boolean renderPublishButton(DrawContext context, int mouseX, int mouseY, int buttonY) {
+    private boolean renderPublishButton(GuiGraphics context, int mouseX, int mouseY, int buttonY) {
         int buttonX = getPublishButtonX();
         boolean hovered = isPointInRect(mouseX, mouseY, buttonX, buttonY, BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE);
         float hoverProgress = getHoverProgress("workspace-publish", hovered);
@@ -5737,33 +5735,33 @@ public class PathmindVisualEditorScreen extends Screen {
             && !PresetManager.hasMarketplaceLinkedPresetChanges(activePresetName);
     }
 
-    private void drawPublishArrowIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawPublishArrowIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int centerX = buttonX + BOTTOM_BUTTON_SIZE / 2;
         int top = buttonY + 4;
         int bottom = buttonY + BOTTOM_BUTTON_SIZE - 4;
-        context.drawVerticalLine(centerX, top + 2, bottom, color);
-        context.drawHorizontalLine(centerX - 3, centerX + 3, top + 2, color);
-        context.drawHorizontalLine(centerX - 2, centerX + 2, top + 1, color);
-        context.drawHorizontalLine(centerX - 1, centerX + 1, top, color);
+        context.vLine(centerX, top + 2, bottom, color);
+        context.hLine(centerX - 3, centerX + 3, top + 2, color);
+        context.hLine(centerX - 2, centerX + 2, top + 1, color);
+        context.hLine(centerX - 1, centerX + 1, top, color);
     }
 
-    private boolean renderHomeButton(DrawContext context, int mouseX, int mouseY, int buttonY) {
+    private boolean renderHomeButton(GuiGraphics context, int mouseX, int mouseY, int buttonY) {
         int buttonX = getHomeButtonX();
         boolean hovered = renderButtonBackground(context, buttonX, buttonY, mouseX, mouseY, false, false, "workspace-home");
         int iconColor = hovered ? getAccentColor() : UITheme.TEXT_PRIMARY;
         int centerX = buttonX + BOTTOM_BUTTON_SIZE / 2;
         int centerY = buttonY + BOTTOM_BUTTON_SIZE / 2;
 
-        context.drawHorizontalLine(centerX - 4, centerX + 2, centerY, iconColor);
-        context.drawVerticalLine(centerX - 4, centerY - 4, centerY + 2, iconColor);
-        context.drawHorizontalLine(centerX - 2, centerX, centerY - 2, iconColor);
-        context.drawHorizontalLine(centerX - 3, centerX - 1, centerY - 1, iconColor);
-        context.drawVerticalLine(centerX - 2, centerY - 2, centerY, iconColor);
-        context.drawVerticalLine(centerX - 3, centerY - 3, centerY - 1, iconColor);
+        context.hLine(centerX - 4, centerX + 2, centerY, iconColor);
+        context.vLine(centerX - 4, centerY - 4, centerY + 2, iconColor);
+        context.hLine(centerX - 2, centerX, centerY - 2, iconColor);
+        context.hLine(centerX - 3, centerX - 1, centerY - 1, iconColor);
+        context.vLine(centerX - 2, centerY - 2, centerY, iconColor);
+        context.vLine(centerX - 3, centerY - 3, centerY - 1, iconColor);
         return hovered;
     }
 
-    private boolean renderClearButton(DrawContext context, int mouseX, int mouseY, int buttonY) {
+    private boolean renderClearButton(GuiGraphics context, int mouseX, int mouseY, int buttonY) {
         int buttonX = getClearButtonX();
         boolean hovered = renderButtonBackground(context, buttonX, buttonY, mouseX, mouseY, clearPopupAnimation.isVisible(), false, "workspace-clear");
         int iconColor = (hovered || clearPopupAnimation.isVisible()) ? getAccentColor() : UITheme.TEXT_PRIMARY;
@@ -5771,17 +5769,17 @@ public class PathmindVisualEditorScreen extends Screen {
         int top = buttonY + 4;
         int bottom = buttonY + BOTTOM_BUTTON_SIZE - 4;
 
-        context.drawHorizontalLine(centerX - 5, centerX + 4, top, iconColor);
-        context.drawVerticalLine(centerX - 5, top, top + 2, iconColor);
-        context.drawVerticalLine(centerX + 4, top, top + 2, iconColor);
-        context.drawHorizontalLine(centerX - 4, centerX + 3, top + 2, iconColor);
-        context.drawVerticalLine(centerX - 3, top + 2, bottom, iconColor);
-        context.drawVerticalLine(centerX + 2, top + 2, bottom, iconColor);
-        context.drawHorizontalLine(centerX - 3, centerX + 2, bottom, iconColor);
+        context.hLine(centerX - 5, centerX + 4, top, iconColor);
+        context.vLine(centerX - 5, top, top + 2, iconColor);
+        context.vLine(centerX + 4, top, top + 2, iconColor);
+        context.hLine(centerX - 4, centerX + 3, top + 2, iconColor);
+        context.vLine(centerX - 3, top + 2, bottom, iconColor);
+        context.vLine(centerX + 2, top + 2, bottom, iconColor);
+        context.hLine(centerX - 3, centerX + 2, bottom, iconColor);
         return hovered;
     }
 
-    private boolean renderImportExportButton(DrawContext context, int mouseX, int mouseY, int buttonY) {
+    private boolean renderImportExportButton(GuiGraphics context, int mouseX, int mouseY, int buttonY) {
         int buttonX = getImportExportButtonX();
         boolean hovered = renderButtonBackground(context, buttonX, buttonY, mouseX, mouseY, importExportPopupAnimation.isVisible(), false, "workspace-import-export");
         int iconColor = (hovered || importExportPopupAnimation.isVisible()) ? getAccentColor() : UITheme.TEXT_PRIMARY;
@@ -5789,25 +5787,25 @@ public class PathmindVisualEditorScreen extends Screen {
         int centerY = buttonY + BOTTOM_BUTTON_SIZE / 2;
 
         // Up arrow
-        context.drawVerticalLine(centerX - 4, centerY - 5, centerY, iconColor);
-        context.drawHorizontalLine(centerX - 6, centerX - 2, centerY - 5, iconColor);
-        context.drawHorizontalLine(centerX - 5, centerX - 3, centerY - 4, iconColor);
+        context.vLine(centerX - 4, centerY - 5, centerY, iconColor);
+        context.hLine(centerX - 6, centerX - 2, centerY - 5, iconColor);
+        context.hLine(centerX - 5, centerX - 3, centerY - 4, iconColor);
 
         // Down arrow
-        context.drawVerticalLine(centerX + 3, centerY, centerY + 5, iconColor);
-        context.drawHorizontalLine(centerX + 1, centerX + 5, centerY + 5, iconColor);
-        context.drawHorizontalLine(centerX + 2, centerX + 4, centerY + 4, iconColor);
+        context.vLine(centerX + 3, centerY, centerY + 5, iconColor);
+        context.hLine(centerX + 1, centerX + 5, centerY + 5, iconColor);
+        context.hLine(centerX + 2, centerX + 4, centerY + 4, iconColor);
 
         // Connector line
-        context.drawHorizontalLine(centerX - 4, centerX + 3, centerY, iconColor);
+        context.hLine(centerX - 4, centerX + 3, centerY, iconColor);
         return hovered;
     }
 
-    private void drawWorkspaceTooltip(DrawContext context, String text, int mouseX, int mouseY) {
-        TooltipRenderer.render(context, this.textRenderer, text, mouseX, mouseY, this.width, this.height);
+    private void drawWorkspaceTooltip(GuiGraphics context, String text, int mouseX, int mouseY) {
+        TooltipRenderer.render(context, this.font, text, mouseX, mouseY, this.width, this.height);
     }
 
-    private void renderValidationButton(DrawContext context, int mouseX, int mouseY, boolean disabled,
+    private void renderValidationButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled,
                                         GraphValidationResult validationResult) {
         int buttonX = getValidationButtonX();
         int buttonY = getValidationButtonY();
@@ -5845,7 +5843,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
     }
 
-    private void renderValidationPanel(DrawContext context, int mouseX, int mouseY, GraphValidationResult validationResult) {
+    private void renderValidationPanel(GuiGraphics context, int mouseX, int mouseY, GraphValidationResult validationResult) {
         float progress = validationPanelAnimation.getValue();
         if (progress <= 0.001f || validationResult == null) {
             hidePresetInputFields();
@@ -5879,12 +5877,12 @@ public class PathmindVisualEditorScreen extends Screen {
         int textColor = validationResult.hasErrors() ? UITheme.STATE_ERROR
             : validationResult.hasWarnings() ? UITheme.ACCENT_AMBER
             : UITheme.TEXT_PRIMARY;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Checks"), panelX + VALIDATION_PANEL_PADDING,
+        context.drawString(this.font, Component.literal("Checks"), panelX + VALIDATION_PANEL_PADDING,
             panelY + 8, textColor);
 
         String summary = validationResult.getErrorCount() + " error" + (validationResult.getErrorCount() == 1 ? "" : "s")
             + "  " + validationResult.getWarningCount() + " warning" + (validationResult.getWarningCount() == 1 ? "" : "s");
-        context.drawTextWithShadow(this.textRenderer, Text.literal(summary), panelX + VALIDATION_PANEL_PADDING,
+        context.drawString(this.font, Component.literal(summary), panelX + VALIDATION_PANEL_PADDING,
             panelY + 19, UITheme.TEXT_SECONDARY);
 
         List<GraphValidationIssue> visibleIssues = getVisibleValidationIssues(validationResult);
@@ -5897,17 +5895,17 @@ public class PathmindVisualEditorScreen extends Screen {
             float hoverProgress = getValidationIssueHoverProgress(issue, index, hovered);
             int rowBg = AnimationHelper.lerpColor(UITheme.BACKGROUND_SECONDARY, UITheme.TOOLBAR_BG_HOVER, hoverProgress);
             context.fill(panelX + 1, rowY, panelX + panelWidth - 1, rowY + VALIDATION_PANEL_ROW_HEIGHT, rowBg);
-            context.drawHorizontalLine(panelX + 1, panelX + panelWidth - 2, rowY, UITheme.BORDER_SUBTLE);
+            context.hLine(panelX + 1, panelX + panelWidth - 2, rowY, UITheme.BORDER_SUBTLE);
 
             int severityColor = issue.getSeverity() == GraphValidationSeverity.ERROR ? UITheme.STATE_ERROR : UITheme.ACCENT_AMBER;
             int dotTop = rowY + 7;
             context.fill(panelX + 8, dotTop, panelX + 12, dotTop + 4, severityColor);
 
             String prefix = issue.getSeverity() == GraphValidationSeverity.ERROR ? "Error" : "Warning";
-            String message = TextRenderUtil.trimWithEllipsis(this.textRenderer,
+            String message = TextRenderUtil.trimWithEllipsis(this.font,
                 prefix + ": " + issue.getMessage(), panelWidth - 34);
             int rowTextColor = AnimationHelper.lerpColor(UITheme.TEXT_HEADER, UITheme.TEXT_PRIMARY, hoverProgress);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(message), panelX + 18, rowY + 7,
+            context.drawString(this.font, Component.literal(message), panelX + 18, rowY + 7,
                 rowTextColor);
         }
 
@@ -5917,9 +5915,9 @@ public class PathmindVisualEditorScreen extends Screen {
         int hiddenCount = validationResult.getIssues().size() - visibleIssues.size();
         if (hiddenCount > 0) {
             int footerY = panelY + panelHeight - VALIDATION_PANEL_FOOTER_HEIGHT;
-            context.drawHorizontalLine(panelX + 1, panelX + panelWidth - 2, footerY, UITheme.BORDER_SUBTLE);
-            context.drawTextWithShadow(this.textRenderer,
-                Text.literal(hiddenCount + " more issue" + (hiddenCount == 1 ? "" : "s")),
+            context.hLine(panelX + 1, panelX + panelWidth - 2, footerY, UITheme.BORDER_SUBTLE);
+            context.drawString(this.font,
+                Component.literal(hiddenCount + " more issue" + (hiddenCount == 1 ? "" : "s")),
                 panelX + VALIDATION_PANEL_PADDING,
                 footerY + 5,
                 UITheme.TEXT_SECONDARY
@@ -5991,43 +5989,43 @@ public class PathmindVisualEditorScreen extends Screen {
         return new int[]{x, y, width, height};
     }
 
-    private int renderValidationPresetInputs(DrawContext context, int mouseX, int mouseY, int panelX, int panelWidth, int topY) {
+    private int renderValidationPresetInputs(GuiGraphics context, int mouseX, int mouseY, int panelX, int panelWidth, int topY) {
         hidePresetInputFields();
         List<NodeGraphData.CustomNodePort> ports = getActivePresetInputPorts();
         if (ports.isEmpty()) {
             return topY;
         }
         int sectionTop = topY + VALIDATION_PANEL_SECTION_GAP;
-        context.drawHorizontalLine(panelX + 1, panelX + panelWidth - 2, sectionTop, UITheme.BORDER_SUBTLE);
+        context.hLine(panelX + 1, panelX + panelWidth - 2, sectionTop, UITheme.BORDER_SUBTLE);
         int labelY = sectionTop + 5;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Preset Inputs"), panelX + VALIDATION_PANEL_PADDING, labelY, UITheme.TEXT_SECONDARY);
+        context.drawString(this.font, Component.literal("Preset Inputs"), panelX + VALIDATION_PANEL_PADDING, labelY, UITheme.TEXT_SECONDARY);
         int currentTop = sectionTop + 18;
         for (NodeGraphData.CustomNodePort port : ports) {
             int rowY = currentTop;
             context.fill(panelX + 1, rowY, panelX + panelWidth - 1, rowY + VALIDATION_PANEL_ROW_HEIGHT, UITheme.BACKGROUND_SECONDARY);
-            context.drawHorizontalLine(panelX + 1, panelX + panelWidth - 2, rowY, UITheme.BORDER_SUBTLE);
+            context.hLine(panelX + 1, panelX + panelWidth - 2, rowY, UITheme.BORDER_SUBTLE);
             int labelMaxWidth = Math.max(40, panelWidth - VALIDATION_PANEL_PADDING * 2 - VALIDATION_INPUT_FIELD_WIDTH - 10);
-            String trimmed = TextRenderUtil.trimWithEllipsis(this.textRenderer, port.getName(), labelMaxWidth);
+            String trimmed = TextRenderUtil.trimWithEllipsis(this.font, port.getName(), labelMaxWidth);
             Node targetNode = findPresetInputVariableNode(port);
             int labelX = panelX + VALIDATION_PANEL_PADDING;
-            int labelWidth = Math.min(labelMaxWidth, this.textRenderer.getWidth(trimmed));
-            boolean labelHovered = targetNode != null && isPointInRect(mouseX, mouseY, labelX - 2, rowY + 4, labelWidth + 4, this.textRenderer.fontHeight + 4);
+            int labelWidth = Math.min(labelMaxWidth, this.font.width(trimmed));
+            boolean labelHovered = targetNode != null && isPointInRect(mouseX, mouseY, labelX - 2, rowY + 4, labelWidth + 4, this.font.lineHeight + 4);
             float hoverProgress = getPresetInputLabelHoverProgress(port, labelHovered);
             int labelColor = AnimationHelper.lerpColor(UITheme.TEXT_HEADER, getAccentColor(), hoverProgress * 0.8f);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(trimmed), labelX, rowY + 7, labelColor);
+            context.drawString(this.font, Component.literal(trimmed), labelX, rowY + 7, labelColor);
             if (hoverProgress > 0.001f) {
                 int glowColor = AnimationHelper.lerpColor(UITheme.BACKGROUND_SECONDARY, getAccentColor(), hoverProgress * 0.18f);
-                context.fill(labelX - 2, rowY + 5, labelX + labelWidth + 2, rowY + 5 + this.textRenderer.fontHeight + 2, glowColor);
-                context.drawTextWithShadow(this.textRenderer, Text.literal(trimmed), labelX, rowY + 7, labelColor);
+                context.fill(labelX - 2, rowY + 5, labelX + labelWidth + 2, rowY + 5 + this.font.lineHeight + 2, glowColor);
+                context.drawString(this.font, Component.literal(trimmed), labelX, rowY + 7, labelColor);
             }
             if (isPresetBooleanPort(port)) {
                 int toggleX = panelX + panelWidth - SETTINGS_TOGGLE_WIDTH - VALIDATION_PANEL_PADDING;
                 int toggleY = rowY + (VALIDATION_PANEL_ROW_HEIGHT - SETTINGS_TOGGLE_HEIGHT) / 2;
                 boolean hovered = isPointInRect(mouseX, mouseY, toggleX, toggleY, SETTINGS_TOGGLE_WIDTH, SETTINGS_TOGGLE_HEIGHT);
                 PopupButtonStyle style = getPresetBooleanValue(port) ? PopupButtonStyle.PRIMARY : PopupButtonStyle.DEFAULT;
-                String toggleLabel = getPresetBooleanValue(port) ? Text.translatable("pathmind.settings.on").getString() : Text.translatable("pathmind.settings.off").getString();
+                String toggleLabel = getPresetBooleanValue(port) ? Component.translatable("pathmind.settings.on").getString() : Component.translatable("pathmind.settings.off").getString();
                 drawPopupButton(context, toggleX, toggleY, SETTINGS_TOGGLE_WIDTH, SETTINGS_TOGGLE_HEIGHT, hovered,
-                    Text.literal(toggleLabel), style, settingsPopupAnimation);
+                    Component.literal(toggleLabel), style, settingsPopupAnimation);
             } else {
                 renderValidationPresetInputField(context, mouseX, mouseY, panelX, panelWidth, rowY, port);
             }
@@ -6036,24 +6034,24 @@ public class PathmindVisualEditorScreen extends Screen {
         return currentTop;
     }
 
-    private void renderValidationPresetInputField(DrawContext context, int mouseX, int mouseY, int panelX, int panelWidth,
+    private void renderValidationPresetInputField(GuiGraphics context, int mouseX, int mouseY, int panelX, int panelWidth,
                                                   int rowY, NodeGraphData.CustomNodePort port) {
         int fieldX = panelX + panelWidth - VALIDATION_INPUT_FIELD_WIDTH - VALIDATION_PANEL_PADDING;
         int fieldY = rowY + (VALIDATION_PANEL_ROW_HEIGHT - VALIDATION_INPUT_FIELD_HEIGHT) / 2;
-        TextFieldWidget field = getOrCreatePresetInputField(port);
+        EditBox field = getOrCreatePresetInputField(port);
         String valueText = getPresetInputValue(port);
         boolean hovered = isPointInRect(mouseX, mouseY, fieldX, fieldY, VALIDATION_INPUT_FIELD_WIDTH, VALIDATION_INPUT_FIELD_HEIGHT);
         boolean focused = field.isFocused();
         float hoverProgress = getValidationInputFieldHoverProgress(port, hovered);
         UIStyleHelper.FieldPalette palette = UIStyleHelper.getSearchFieldPalette(getAccentColor(), hoverProgress, focused, false);
         UIStyleHelper.drawFieldFrame(context, fieldX, fieldY, VALIDATION_INPUT_FIELD_WIDTH, VALIDATION_INPUT_FIELD_HEIGHT, palette);
-        if (!focused && !valueText.equals(field.getText())) {
-            field.setText(valueText);
+        if (!focused && !valueText.equals(field.getValue())) {
+            field.setValue(valueText);
         }
         field.setVisible(true);
         field.setEditable(true);
-        field.setEditableColor(UITheme.TEXT_HEADER);
-        field.setUneditableColor(UITheme.TEXT_HEADER);
+        field.setTextColor(UITheme.TEXT_HEADER);
+        field.setTextColorUneditable(UITheme.TEXT_HEADER);
         int textFieldHeight = Math.max(10, VALIDATION_INPUT_FIELD_HEIGHT - TEXT_FIELD_VERTICAL_PADDING * 2);
         field.setPosition(fieldX + 4, fieldY + TEXT_FIELD_VERTICAL_PADDING);
         field.setWidth(VALIDATION_INPUT_FIELD_WIDTH - 8);
@@ -6087,7 +6085,7 @@ public class PathmindVisualEditorScreen extends Screen {
             } else {
                 int fieldX = panelX + panelWidth - VALIDATION_INPUT_FIELD_WIDTH - VALIDATION_PANEL_PADDING;
                 int fieldY = rowY + (VALIDATION_PANEL_ROW_HEIGHT - VALIDATION_INPUT_FIELD_HEIGHT) / 2;
-                TextFieldWidget field = getOrCreatePresetInputField(port);
+                EditBox field = getOrCreatePresetInputField(port);
                 if (isPointInRect(mouseX, mouseY, fieldX, fieldY, VALIDATION_INPUT_FIELD_WIDTH, VALIDATION_INPUT_FIELD_HEIGHT)) {
                     focusPresetInputField(field);
                     return true;
@@ -6244,10 +6242,10 @@ public class PathmindVisualEditorScreen extends Screen {
             return false;
         }
         int labelMaxWidth = Math.max(40, panelWidth - VALIDATION_PANEL_PADDING * 2 - VALIDATION_INPUT_FIELD_WIDTH - 10);
-        String trimmed = TextRenderUtil.trimWithEllipsis(this.textRenderer, port.getName(), labelMaxWidth);
+        String trimmed = TextRenderUtil.trimWithEllipsis(this.font, port.getName(), labelMaxWidth);
         int labelX = panelX + VALIDATION_PANEL_PADDING;
-        int labelWidth = Math.min(labelMaxWidth, this.textRenderer.getWidth(trimmed));
-        return isPointInRect(mouseX, mouseY, labelX - 2, rowY + 4, labelWidth + 4, this.textRenderer.fontHeight + 4);
+        int labelWidth = Math.min(labelMaxWidth, this.font.width(trimmed));
+        return isPointInRect(mouseX, mouseY, labelX - 2, rowY + 4, labelWidth + 4, this.font.lineHeight + 4);
     }
 
     private float getPresetInputLabelHoverProgress(NodeGraphData.CustomNodePort port, boolean hovered) {
@@ -6347,32 +6345,32 @@ public class PathmindVisualEditorScreen extends Screen {
         SettingsManager.save(currentSettings);
     }
 
-    private TextFieldWidget getOrCreatePresetInputField(NodeGraphData.CustomNodePort port) {
+    private EditBox getOrCreatePresetInputField(NodeGraphData.CustomNodePort port) {
         String fieldKey = getPresetInputScopeKey() + "::" + port.getName();
-        TextFieldWidget existing = presetInputFields.get(fieldKey);
+        EditBox existing = presetInputFields.get(fieldKey);
         if (existing != null) {
             return existing;
         }
-        TextFieldWidget field = new PathmindTextField(this.textRenderer, 0, 0, VALIDATION_INPUT_FIELD_WIDTH, 20, Text.literal(port.getName()));
+        EditBox field = new PathmindTextField(this.font, 0, 0, VALIDATION_INPUT_FIELD_WIDTH, 20, Component.literal(port.getName()));
         field.setMaxLength(96);
-        field.setDrawsBackground(false);
+        field.setBordered(false);
         field.setVisible(false);
         field.setEditable(false);
-        field.setEditableColor(UITheme.TEXT_HEADER);
-        field.setUneditableColor(UITheme.TEXT_HEADER);
+        field.setTextColor(UITheme.TEXT_HEADER);
+        field.setTextColorUneditable(UITheme.TEXT_HEADER);
         if (isPresetIntegerPort(port)) {
-            field.setTextPredicate(value -> value == null || value.isEmpty() || value.matches("-?\\d*"));
+            field.setFilter(value -> value == null || value.isEmpty() || value.matches("-?\\d*"));
         } else if (isPresetDecimalPort(port)) {
-            field.setTextPredicate(value -> value == null || value.isEmpty() || value.matches("-?\\d*(\\.\\d*)?"));
+            field.setFilter(value -> value == null || value.isEmpty() || value.matches("-?\\d*(\\.\\d*)?"));
         }
-        field.setChangedListener(value -> setPresetInputValue(port, value));
-        this.addSelectableChild(field);
+        field.setResponder(value -> setPresetInputValue(port, value));
+        this.addWidget(field);
         presetInputFields.put(fieldKey, field);
         return field;
     }
 
     private void hidePresetInputFields() {
-        for (TextFieldWidget field : presetInputFields.values()) {
+        for (EditBox field : presetInputFields.values()) {
             if (field != null) {
                 field.setVisible(false);
                 field.setEditable(false);
@@ -6381,7 +6379,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void clearPresetInputFieldFocus() {
-        for (TextFieldWidget field : presetInputFields.values()) {
+        for (EditBox field : presetInputFields.values()) {
             if (field != null) {
                 field.setFocused(false);
                 field.setVisible(false);
@@ -6390,8 +6388,8 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
-    private void focusPresetInputField(TextFieldWidget targetField) {
-        for (TextFieldWidget field : presetInputFields.values()) {
+    private void focusPresetInputField(EditBox targetField) {
+        for (EditBox field : presetInputFields.values()) {
             if (field == null) {
                 continue;
             }
@@ -6423,7 +6421,7 @@ public class PathmindVisualEditorScreen extends Screen {
             || NodeType.PARAM_DISTANCE.name().equals(port.getType());
     }
 
-    private void drawValidationConsoleIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawValidationConsoleIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int left = buttonX + 4;
         int top = buttonY + 4;
         context.fill(left, top, left + 10, top + 1, color);
@@ -6435,14 +6433,14 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(left + 2, top + 6, left + 6, top + 7, color);
     }
 
-    private void drawValidationAlertIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawValidationAlertIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int stemX = buttonX + VALIDATION_BUTTON_SIZE / 2 - 1;
         int top = buttonY + 4;
         context.fill(stemX, top, stemX + 2, top + 6, color);
         context.fill(stemX, top + 8, stemX + 2, top + 10, color);
     }
 
-    private void drawValidationCountBadge(DrawContext context, GraphValidationResult validationResult, int buttonX, int buttonY,
+    private void drawValidationCountBadge(GuiGraphics context, GraphValidationResult validationResult, int buttonX, int buttonY,
                                           boolean disabled) {
         int count = validationResult.getErrorCount() > 0 ? validationResult.getErrorCount() : validationResult.getWarningCount();
         int badgeColor = validationResult.getErrorCount() > 0 ? UITheme.STATE_ERROR : UITheme.ACCENT_AMBER;
@@ -6450,13 +6448,13 @@ public class PathmindVisualEditorScreen extends Screen {
             badgeColor = UITheme.DROPDOWN_ACTION_DISABLED;
         }
         String text = count > 9 ? "9+" : String.valueOf(count);
-        int textWidth = this.textRenderer.getWidth(text);
+        int textWidth = this.font.width(text);
         int badgeSize = Math.max(9, textWidth + 4);
         int badgeX = buttonX + VALIDATION_BUTTON_SIZE - badgeSize + 1;
         int badgeY = buttonY - 2;
         context.fill(badgeX, badgeY, badgeX + badgeSize, badgeY + badgeSize, badgeColor);
         DrawContextBridge.drawBorder(context, badgeX, badgeY, badgeSize, badgeSize, UITheme.BORDER_HIGHLIGHT);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(text), badgeX + (badgeSize - textWidth) / 2, badgeY + 1,
+        context.drawString(this.font, Component.literal(text), badgeX + (badgeSize - textWidth) / 2, badgeY + 1,
             UITheme.TEXT_PRIMARY);
     }
 
@@ -6469,7 +6467,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return AnimationHelper.lerpColor(normalColor, hoverColor, hoverProgress);
     }
 
-    private void renderSettingsButton(DrawContext context, int mouseX, int mouseY, boolean disabled) {
+    private void renderSettingsButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
         int buttonX = getSettingsButtonX();
         int buttonY = getSettingsButtonY();
         boolean active = settingsPopupAnimation.isVisible();
@@ -6484,7 +6482,7 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
-    private void drawSettingsIcon(DrawContext context, int buttonX, int buttonY, int color) {
+    private void drawSettingsIcon(GuiGraphics context, int buttonX, int buttonY, int color) {
         int centerX = buttonX + BOTTOM_BUTTON_SIZE / 2;
         int centerY = buttonY + BOTTOM_BUTTON_SIZE / 2;
         int tooth = 2;
@@ -6498,7 +6496,7 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(centerX - 1, centerY - 1, centerX + 1, centerY + 1, color);
     }
 
-    private void renderSettingsPopup(DrawContext context, int mouseX, int mouseY) {
+    private void renderSettingsPopup(GuiGraphics context, int mouseX, int mouseY) {
         float popupAlpha = settingsPopupAnimation.getPopupAlpha();
 
         int popupWidth = SETTINGS_POPUP_WIDTH;
@@ -6513,9 +6511,9 @@ public class PathmindVisualEditorScreen extends Screen {
         drawPopupContainer(context, popupX, popupY, scaledWidth, scaledHeight, settingsPopupAnimation);
         boolean popupScissor = enablePopupScissor(context, popupX, popupY, scaledWidth, scaledHeight);
 
-        context.drawCenteredTextWithShadow(
-            this.textRenderer,
-            Text.translatable("pathmind.settings.title"),
+        context.drawCenteredString(
+            this.font,
+            Component.translatable("pathmind.settings.title"),
             popupX + scaledWidth / 2,
             popupY + 14,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_PRIMARY)
@@ -6523,14 +6521,14 @@ public class PathmindVisualEditorScreen extends Screen {
 
         int[] bodyBounds = getSettingsPopupBodyBounds(popupX, popupY, scaledWidth, scaledHeight);
         int maxScroll = getSettingsPopupMaxScroll(popupX, popupY, scaledWidth, scaledHeight);
-        settingsPopupScrollOffset = MathHelper.clamp(settingsPopupScrollOffset, 0, maxScroll);
+        settingsPopupScrollOffset = Mth.clamp(settingsPopupScrollOffset, 0, maxScroll);
         int contentPopupY = popupY - settingsPopupScrollOffset;
         context.enableScissor(bodyBounds[0], bodyBounds[1], bodyBounds[0] + bodyBounds[2], bodyBounds[1] + bodyBounds[3]);
         int contentX = popupX + 20;
 
         // Language section
         int languageLabelY = contentPopupY + 44;
-        drawPopupTextWithEllipsis(context, Text.translatable("pathmind.settings.language").getString(), contentX, languageLabelY, scaledWidth - 40,
+        drawPopupTextWithEllipsis(context, Component.translatable("pathmind.settings.language").getString(), contentX, languageLabelY, scaledWidth - 40,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_SECONDARY));
 
         // Language dropdown button
@@ -6546,7 +6544,7 @@ public class PathmindVisualEditorScreen extends Screen {
         this.languageDropdownClipWidth = bodyBounds[2];
         this.languageDropdownClipHeight = bodyBounds[3];
 
-        String currentLang = this.client.getLanguageManager().getLanguage();
+        String currentLang = this.minecraft.getLanguageManager().getSelected();
         String langDisplayName = getLanguageDisplayName(currentLang);
         boolean languageHovered = mouseX >= contentX && mouseX <= contentX + languageButtonWidth && mouseY >= languageButtonY && mouseY <= languageButtonY + 20;
         drawLanguageDropdown(context, contentX, languageButtonY, languageButtonWidth, langDisplayName, languageHovered);
@@ -6554,7 +6552,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
         // Adjust following sections downward by 50 pixels
         int accentLabelY = languageButtonY + 50;
-        drawPopupTextWithEllipsis(context, Text.translatable("pathmind.settings.accent").getString(), contentX, accentLabelY, scaledWidth - 40,
+        drawPopupTextWithEllipsis(context, Component.translatable("pathmind.settings.accent").getString(), contentX, accentLabelY, scaledWidth - 40,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_SECONDARY));
 
         int accentOptionsY = accentLabelY + 12;
@@ -6569,43 +6567,43 @@ public class PathmindVisualEditorScreen extends Screen {
 
         int sectionDividerX = popupX + 16;
         int sectionDividerY = accentOptionsY + SETTINGS_OPTION_HEIGHT + 10;
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, sectionDividerY,
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, sectionDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int settingDividerY = sectionDividerY + 22;
         int gridRowCenterY = (sectionDividerY + settingDividerY) / 2;
-        renderToggleRow(context, mouseX, mouseY, contentX, gridRowCenterY, Text.translatable("pathmind.settings.showGrid").getString(), showGrid, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, settingDividerY,
+        renderToggleRow(context, mouseX, mouseY, contentX, gridRowCenterY, Component.translatable("pathmind.settings.showGrid").getString(), showGrid, popupX, scaledWidth);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, settingDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int footerDividerY = settingDividerY + 22;
         int tooltipRowCenterY = (settingDividerY + footerDividerY) / 2;
-        renderToggleRow(context, mouseX, mouseY, contentX, tooltipRowCenterY, Text.translatable("pathmind.settings.renderConnectionsOnTop").getString(), renderConnectionsOnTop, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, footerDividerY,
+        renderToggleRow(context, mouseX, mouseY, contentX, tooltipRowCenterY, Component.translatable("pathmind.settings.renderConnectionsOnTop").getString(), renderConnectionsOnTop, popupX, scaledWidth);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, footerDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int chatDividerY = footerDividerY + 22;
         int chatRowCenterY = (footerDividerY + chatDividerY) / 2;
-        renderToggleRow(context, mouseX, mouseY, contentX, chatRowCenterY, Text.translatable("pathmind.settings.showTooltips").getString(), showWorkspaceTooltips, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, chatDividerY,
+        renderToggleRow(context, mouseX, mouseY, contentX, chatRowCenterY, Component.translatable("pathmind.settings.showTooltips").getString(), showWorkspaceTooltips, popupX, scaledWidth);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, chatDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int overlayDividerY = chatDividerY + 22;
         int overlayRowCenterY = (chatDividerY + overlayDividerY) / 2;
-        renderToggleRow(context, mouseX, mouseY, contentX, overlayRowCenterY, Text.translatable("pathmind.settings.showChatErrors").getString(), showChatErrors, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, overlayDividerY,
+        renderToggleRow(context, mouseX, mouseY, contentX, overlayRowCenterY, Component.translatable("pathmind.settings.showChatErrors").getString(), showChatErrors, popupX, scaledWidth);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, overlayDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int hudDividerY = overlayDividerY + 22;
         int hudRowCenterY = (overlayDividerY + hudDividerY) / 2;
-        renderToggleRow(context, mouseX, mouseY, contentX, hudRowCenterY, Text.translatable("pathmind.settings.showHudOverlays").getString(), showHudOverlays, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, hudDividerY,
+        renderToggleRow(context, mouseX, mouseY, contentX, hudRowCenterY, Component.translatable("pathmind.settings.showHudOverlays").getString(), showHudOverlays, popupX, scaledWidth);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, hudDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int delayDividerY = hudDividerY + 26;
         int delayRowCenterY = (hudDividerY + delayDividerY) / 2;
         renderNodeDelayRow(context, mouseX, mouseY, contentX, delayRowCenterY, nodeDelayMs, NODE_DELAY_MIN_MS, NODE_DELAY_MAX_MS, popupX, scaledWidth);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, delayDividerY,
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, delayDividerY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
         int nodeSettingsLabelY = getSettingsNodeSectionLabelY(contentPopupY);
@@ -6631,14 +6629,14 @@ public class PathmindVisualEditorScreen extends Screen {
             int gotoBreakRowCenterY = (nodeSettingsContentY + 10 + gotoBreakDividerY) / 2;
             renderToggleRow(context, mouseX, mouseY, contentX, gotoBreakRowCenterY,
                 "Allow Baritone to break blocks while executing", currentSettings.gotoAllowBreakWhileExecuting != null && currentSettings.gotoAllowBreakWhileExecuting, popupX, scaledWidth);
-            context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, gotoBreakDividerY,
+            context.hLine(sectionDividerX, popupX + scaledWidth - 16, gotoBreakDividerY,
                 getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
             int gotoPlaceDividerY = gotoBreakDividerY + 22;
             int gotoPlaceRowCenterY = (gotoBreakDividerY + gotoPlaceDividerY) / 2;
             renderToggleRow(context, mouseX, mouseY, contentX, gotoPlaceRowCenterY,
                 "Allow Baritone to place blocks while executing", currentSettings.gotoAllowPlaceWhileExecuting != null && currentSettings.gotoAllowPlaceWhileExecuting, popupX, scaledWidth);
-            context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, gotoPlaceDividerY,
+            context.hLine(sectionDividerX, popupX + scaledWidth - 16, gotoPlaceDividerY,
                 getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
         } else if (targetType == NodeType.SENSOR_KEY_PRESSED) {
             drawPopupTextWithEllipsis(context, "Editing: " + targetType.getDisplayName(), contentX, nodeSettingsContentY, scaledWidth - 40,
@@ -6648,7 +6646,7 @@ public class PathmindVisualEditorScreen extends Screen {
             int keyPressedRowCenterY = (nodeSettingsContentY + 10 + keyPressedDividerY) / 2;
             renderToggleRow(context, mouseX, mouseY, contentX, keyPressedRowCenterY,
                 "Activate while GUIs are open", currentSettings.keyPressedActivatesInGuis == null || currentSettings.keyPressedActivatesInGuis, popupX, scaledWidth);
-            context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, keyPressedDividerY,
+            context.hLine(sectionDividerX, popupX + scaledWidth - 16, keyPressedDividerY,
                 getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
         } else if (targetType == NodeType.CREATE_LIST) {
             Node targetNode = getEffectiveSettingsTargetNode();
@@ -6661,7 +6659,7 @@ public class PathmindVisualEditorScreen extends Screen {
             int createListToggleRowCenterY = (nodeSettingsContentY + 10 + createListToggleDividerY) / 2;
             renderToggleRow(context, mouseX, mouseY, contentX, createListToggleRowCenterY,
                 "Use custom radius instead of render distance", useRadius, popupX, scaledWidth);
-            context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, createListToggleDividerY,
+            context.hLine(sectionDividerX, popupX + scaledWidth - 16, createListToggleDividerY,
                 getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
 
             if (useRadius) {
@@ -6669,22 +6667,22 @@ public class PathmindVisualEditorScreen extends Screen {
                 int createListRadiusRowCenterY = (createListToggleDividerY + createListRadiusDividerY) / 2;
                 renderCreateListRadiusRow(context, mouseX, mouseY, contentX, createListRadiusRowCenterY,
                     radius, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX, popupX, scaledWidth);
-                context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16, createListRadiusDividerY,
+                context.hLine(sectionDividerX, popupX + scaledWidth - 16, createListRadiusDividerY,
                     getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
             }
         }
 
         int[] clearCacheButtonBounds = getSettingsClearCacheButtonBounds(popupX, popupY, scaledWidth, scaledHeight, contentX, nodeSettingsContentY);
         int clearCacheRowCenterY = getSettingsClearCacheRowCenterY(popupX, popupY, scaledWidth, scaledHeight, contentX, nodeSettingsContentY);
-        context.drawHorizontalLine(sectionDividerX, popupX + scaledWidth - 16,
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16,
             getSettingsClearCacheDividerY(popupX, popupY, scaledWidth, scaledHeight, contentX, nodeSettingsContentY),
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.BORDER_SUBTLE));
         boolean clearCacheHovered = isPointInRect(mouseX, mouseY, clearCacheButtonBounds[0], clearCacheButtonBounds[1],
             clearCacheButtonBounds[2], clearCacheButtonBounds[3]);
-        drawPopupTextWithEllipsis(context, "Clear cache", contentX, clearCacheRowCenterY - this.textRenderer.fontHeight / 2,
+        drawPopupTextWithEllipsis(context, "Clear cache", contentX, clearCacheRowCenterY - this.font.lineHeight / 2,
             scaledWidth - 40 - clearCacheButtonBounds[2] - 12, getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_PRIMARY));
         drawPopupButton(context, clearCacheButtonBounds[0], clearCacheButtonBounds[1], clearCacheButtonBounds[2], clearCacheButtonBounds[3],
-            clearCacheHovered, Text.literal("Clear"), PopupButtonStyle.DEFAULT, settingsPopupAnimation);
+            clearCacheHovered, Component.literal("Clear"), PopupButtonStyle.DEFAULT, settingsPopupAnimation);
 
         int buttonWidth = 90;
         int buttonHeight = 20;
@@ -6706,12 +6704,12 @@ public class PathmindVisualEditorScreen extends Screen {
         renderSettingsPopupScrollbar(context, popupX, popupY, scaledWidth, scaledHeight, maxScroll);
         boolean closeHovered = isPointInRect(mouseX, mouseY, buttonX, buttonY, buttonWidth, buttonHeight);
         drawPopupButton(context, buttonX, buttonY, buttonWidth, buttonHeight, closeHovered,
-            Text.translatable("pathmind.button.close"), PopupButtonStyle.ACCENT, settingsPopupAnimation);
+            Component.translatable("pathmind.button.close"), PopupButtonStyle.ACCENT, settingsPopupAnimation);
         disablePopupScissor(context, popupScissor);
         RenderStateBridge.setShaderColor(1f, 1f, 1f, 1f);
     }
 
-    private void drawAccentOption(DrawContext context, int x, int y, AccentOption option, boolean hovered, boolean selected) {
+    private void drawAccentOption(GuiGraphics context, int x, int y, AccentOption option, boolean hovered, boolean selected) {
         float hoverProgress = selected ? 1f : getHoverProgress("settings-accent-option:" + option.name(), hovered);
         int bgColor = AnimationHelper.lerpColor(
             selected ? UITheme.DROPDOWN_OPTION_HOVER : UITheme.DROPDOWN_OPTION_BG,
@@ -6737,13 +6735,13 @@ public class PathmindVisualEditorScreen extends Screen {
             getPopupAnimatedColor(settingsPopupAnimation, option.color));
 
         int labelX = swatchX + swatchSize + 4;
-        int labelY = y + (SETTINGS_OPTION_HEIGHT - this.textRenderer.fontHeight) / 2 + 1;
-        context.drawTextWithShadow(this.textRenderer, Text.literal(option.label), labelX, labelY,
+        int labelY = y + (SETTINGS_OPTION_HEIGHT - this.font.lineHeight) / 2 + 1;
+        context.drawString(this.font, Component.literal(option.label), labelX, labelY,
             getPopupAnimatedColor(settingsPopupAnimation, AnimationHelper.lerpColor(UITheme.TEXT_PRIMARY, getAccentColor(), hoverProgress)));
     }
 
-    private void renderToggleRow(DrawContext context, int mouseX, int mouseY, int labelX, int centerY, String label, boolean active, int popupX, int scaledWidth) {
-        int labelY = centerY - this.textRenderer.fontHeight / 2;
+    private void renderToggleRow(GuiGraphics context, int mouseX, int mouseY, int labelX, int centerY, String label, boolean active, int popupX, int scaledWidth) {
+        int labelY = centerY - this.font.lineHeight / 2;
         int toggleX = popupX + scaledWidth - SETTINGS_TOGGLE_WIDTH - 20;
         int toggleY = centerY - SETTINGS_TOGGLE_HEIGHT / 2;
         int maxLabelWidth = Math.max(0, toggleX - labelX - 8);
@@ -6752,18 +6750,18 @@ public class PathmindVisualEditorScreen extends Screen {
 
         boolean hovered = isPointInRect(mouseX, mouseY, toggleX, toggleY, SETTINGS_TOGGLE_WIDTH, SETTINGS_TOGGLE_HEIGHT);
         PopupButtonStyle style = active ? PopupButtonStyle.PRIMARY : PopupButtonStyle.DEFAULT;
-        String toggleLabel = active ? Text.translatable("pathmind.settings.on").getString() : Text.translatable("pathmind.settings.off").getString();
+        String toggleLabel = active ? Component.translatable("pathmind.settings.on").getString() : Component.translatable("pathmind.settings.off").getString();
         drawPopupButton(context, toggleX, toggleY, SETTINGS_TOGGLE_WIDTH, SETTINGS_TOGGLE_HEIGHT, hovered,
-            Text.literal(toggleLabel), style, settingsPopupAnimation);
+            Component.literal(toggleLabel), style, settingsPopupAnimation);
     }
 
-    private void renderSliderRow(DrawContext context, int mouseX, int mouseY, int labelX, int centerY, String label,
+    private void renderSliderRow(GuiGraphics context, int mouseX, int mouseY, int labelX, int centerY, String label,
                                  int value, int min, int max, int popupX, int scaledWidth) {
-        int labelY = centerY - this.textRenderer.fontHeight / 2;
+        int labelY = centerY - this.font.lineHeight / 2;
         int sliderX = popupX + scaledWidth - SETTINGS_SLIDER_WIDTH - 20;
         int sliderY = centerY - SETTINGS_SLIDER_HEIGHT / 2;
         String valueText = value + "ms";
-        int valueTextWidth = this.textRenderer.getWidth(valueText);
+        int valueTextWidth = this.font.width(valueText);
         int valueBoxWidth = Math.max(36, valueTextWidth + 10);
         int valueBoxX = sliderX - valueBoxWidth - 8;
         int valueBoxY = centerY - SETTINGS_SLIDER_HEIGHT / 2;
@@ -6780,8 +6778,8 @@ public class PathmindVisualEditorScreen extends Screen {
             settingsPopupAnimation.getAnimatedPopupColor(UITheme.TEXT_TERTIARY)
         ));
         int valueTextX = valueBoxX + Math.max(4, (valueBoxWidth - valueTextWidth) / 2);
-        int valueTextY = valueBoxY + (valueBoxHeight - this.textRenderer.fontHeight) / 2 + 1;
-        context.drawTextWithShadow(this.textRenderer, Text.literal(valueText), valueTextX, valueTextY,
+        int valueTextY = valueBoxY + (valueBoxHeight - this.font.lineHeight) / 2 + 1;
+        context.drawString(this.font, Component.literal(valueText), valueTextX, valueTextY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
 
         int sliderRight = sliderX + SETTINGS_SLIDER_WIDTH;
@@ -6795,7 +6793,7 @@ public class PathmindVisualEditorScreen extends Screen {
         );
         UIStyleHelper.drawSliderTrack(context, sliderX, sliderY, SETTINGS_SLIDER_WIDTH, SETTINGS_SLIDER_HEIGHT, sliderPalette);
 
-        int clamped = MathHelper.clamp(value, min, max);
+        int clamped = Mth.clamp(value, min, max);
         float t = max == min ? 0f : (clamped - min) / (float) (max - min);
         int handleX = sliderX + Math.round(t * (SETTINGS_SLIDER_WIDTH - SETTINGS_SLIDER_HANDLE_WIDTH));
         int handleY = centerY - SETTINGS_SLIDER_HANDLE_HEIGHT / 2;
@@ -6809,9 +6807,9 @@ public class PathmindVisualEditorScreen extends Screen {
         UIStyleHelper.drawSliderHandle(context, handleX, handleY, SETTINGS_SLIDER_HANDLE_WIDTH, SETTINGS_SLIDER_HANDLE_HEIGHT, handlePalette);
     }
 
-    private void renderNodeDelayRow(DrawContext context, int mouseX, int mouseY, int labelX, int centerY,
+    private void renderNodeDelayRow(GuiGraphics context, int mouseX, int mouseY, int labelX, int centerY,
                                     int value, int min, int max, int popupX, int scaledWidth) {
-        int labelY = centerY - this.textRenderer.fontHeight / 2;
+        int labelY = centerY - this.font.lineHeight / 2;
         int sliderX = popupX + scaledWidth - SETTINGS_SLIDER_WIDTH - 20;
         int sliderY = centerY - SETTINGS_SLIDER_HEIGHT / 2;
 
@@ -6822,7 +6820,7 @@ public class PathmindVisualEditorScreen extends Screen {
         int valueBoxWidth = valueBox[2];
         int valueBoxHeight = valueBox[3];
         int maxLabelWidth = Math.max(0, valueBoxX - labelX - 8);
-        drawPopupTextWithEllipsis(context, Text.translatable("pathmind.settings.nodeDelay").getString(), labelX, labelY, maxLabelWidth,
+        drawPopupTextWithEllipsis(context, Component.translatable("pathmind.settings.nodeDelay").getString(), labelX, labelY, maxLabelWidth,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_SECONDARY));
 
         boolean fieldHovered = isPointInRect(mouseX, mouseY, valueBoxX, valueBoxY, valueBoxWidth, valueBoxHeight);
@@ -6837,14 +6835,14 @@ public class PathmindVisualEditorScreen extends Screen {
 
         if (nodeDelayField != null) {
             if (!focused) {
-                if (!valueText.equals(nodeDelayField.getText())) {
-                    nodeDelayField.setText(valueText);
+                if (!valueText.equals(nodeDelayField.getValue())) {
+                    nodeDelayField.setValue(valueText);
                 }
             }
             nodeDelayField.setVisible(true);
             nodeDelayField.setEditable(true);
-            nodeDelayField.setEditableColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
-            nodeDelayField.setUneditableColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
+            nodeDelayField.setTextColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
+            nodeDelayField.setTextColorUneditable(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
             int textFieldHeight = Math.max(10, valueBoxHeight - TEXT_FIELD_VERTICAL_PADDING * 2);
             nodeDelayField.setPosition(valueBoxX + 4, valueBoxY + TEXT_FIELD_VERTICAL_PADDING);
             nodeDelayField.setWidth(valueBoxWidth - 8);
@@ -6853,8 +6851,8 @@ public class PathmindVisualEditorScreen extends Screen {
         }
 
         int unitX = valueBoxX + valueBoxWidth + 6;
-        int unitY = valueBoxY + (valueBoxHeight - this.textRenderer.fontHeight) / 2 + 1;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("ms"), unitX, unitY,
+        int unitY = valueBoxY + (valueBoxHeight - this.font.lineHeight) / 2 + 1;
+        context.drawString(this.font, Component.literal("ms"), unitX, unitY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_SECONDARY));
 
         int sliderRight = sliderX + SETTINGS_SLIDER_WIDTH;
@@ -6867,7 +6865,7 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(sliderX, sliderY, sliderRight, sliderY + SETTINGS_SLIDER_HEIGHT, trackColor);
         DrawContextBridge.drawBorder(context, sliderX, sliderY, SETTINGS_SLIDER_WIDTH, SETTINGS_SLIDER_HEIGHT, trackBorder);
 
-        int clamped = MathHelper.clamp(value, min, max);
+        int clamped = Mth.clamp(value, min, max);
         float t = max == min ? 0f : (clamped - min) / (float) (max - min);
         int handleX = sliderX + Math.round(t * (SETTINGS_SLIDER_WIDTH - SETTINGS_SLIDER_HANDLE_WIDTH));
         int handleY = centerY - SETTINGS_SLIDER_HANDLE_HEIGHT / 2;
@@ -6879,9 +6877,9 @@ public class PathmindVisualEditorScreen extends Screen {
             handleBorder);
     }
 
-    private void renderCreateListRadiusRow(DrawContext context, int mouseX, int mouseY, int labelX, int centerY,
+    private void renderCreateListRadiusRow(GuiGraphics context, int mouseX, int mouseY, int labelX, int centerY,
                                            int value, int min, int max, int popupX, int scaledWidth) {
-        int labelY = centerY - this.textRenderer.fontHeight / 2;
+        int labelY = centerY - this.font.lineHeight / 2;
         int sliderX = popupX + scaledWidth - SETTINGS_SLIDER_WIDTH - 20;
         int sliderY = centerY - SETTINGS_SLIDER_HEIGHT / 2;
         String valueText = Integer.toString(value);
@@ -6903,13 +6901,13 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(valueBoxX, valueBoxY, valueBoxX + valueBoxWidth, valueBoxY + valueBoxHeight, valueBoxBg);
         DrawContextBridge.drawBorder(context, valueBoxX, valueBoxY, valueBoxWidth, valueBoxHeight, valueBoxBorder);
         if (createListRadiusField != null) {
-            if (!focused && !valueText.equals(createListRadiusField.getText())) {
-                createListRadiusField.setText(valueText);
+            if (!focused && !valueText.equals(createListRadiusField.getValue())) {
+                createListRadiusField.setValue(valueText);
             }
             createListRadiusField.setVisible(true);
             createListRadiusField.setEditable(true);
-            createListRadiusField.setEditableColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
-            createListRadiusField.setUneditableColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
+            createListRadiusField.setTextColor(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
+            createListRadiusField.setTextColorUneditable(getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_HEADER));
             int textFieldHeight = Math.max(10, valueBoxHeight - TEXT_FIELD_VERTICAL_PADDING * 2);
             createListRadiusField.setPosition(valueBoxX + 4, valueBoxY + TEXT_FIELD_VERTICAL_PADDING);
             createListRadiusField.setWidth(valueBoxWidth - 8);
@@ -6917,8 +6915,8 @@ public class PathmindVisualEditorScreen extends Screen {
             createListRadiusField.render(context, mouseX, mouseY, 0f);
         }
         int unitX = valueBoxX + valueBoxWidth + 6;
-        int unitY = valueBoxY + (valueBoxHeight - this.textRenderer.fontHeight) / 2 + 1;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("blocks"), unitX, unitY,
+        int unitY = valueBoxY + (valueBoxHeight - this.font.lineHeight) / 2 + 1;
+        context.drawString(this.font, Component.literal("blocks"), unitX, unitY,
             getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_SECONDARY));
         int sliderRight = sliderX + SETTINGS_SLIDER_WIDTH;
         boolean hovered = isPointInRect(mouseX, mouseY, sliderX, sliderY - 4, SETTINGS_SLIDER_WIDTH, SETTINGS_SLIDER_HEIGHT + 8);
@@ -6929,7 +6927,7 @@ public class PathmindVisualEditorScreen extends Screen {
         trackBorder = settingsPopupAnimation.getAnimatedPopupColor(trackBorder);
         context.fill(sliderX, sliderY, sliderRight, sliderY + SETTINGS_SLIDER_HEIGHT, trackColor);
         DrawContextBridge.drawBorder(context, sliderX, sliderY, SETTINGS_SLIDER_WIDTH, SETTINGS_SLIDER_HEIGHT, trackBorder);
-        int clamped = MathHelper.clamp(value, min, max);
+        int clamped = Mth.clamp(value, min, max);
         float t = max == min ? 0f : (clamped - min) / (float) (max - min);
         int handleX = sliderX + Math.round(t * (SETTINGS_SLIDER_WIDTH - SETTINGS_SLIDER_HANDLE_WIDTH));
         int handleY = centerY - SETTINGS_SLIDER_HANDLE_HEIGHT / 2;
@@ -6943,11 +6941,11 @@ public class PathmindVisualEditorScreen extends Screen {
     private int[] getNodeDelayFieldBounds(int popupX, int scaledWidth, int centerY, String valueText) {
         int sliderX = popupX + scaledWidth - SETTINGS_SLIDER_WIDTH - 20;
         String text = valueText == null ? "" : valueText;
-        int textWidth = this.textRenderer.getWidth(text);
+        int textWidth = this.font.width(text);
         int boxWidth = Math.max(32, textWidth + 8);
         int boxHeight = 16;
         int unitGap = 6;
-        int unitWidth = this.textRenderer.getWidth("ms");
+        int unitWidth = this.font.width("ms");
         int boxX = sliderX - boxWidth - unitGap - unitWidth - 4;
         int boxY = centerY - boxHeight / 2;
         return new int[]{boxX, boxY, boxWidth, boxHeight};
@@ -6956,11 +6954,11 @@ public class PathmindVisualEditorScreen extends Screen {
     private int[] getCreateListRadiusFieldBounds(int popupX, int scaledWidth, int centerY, String valueText) {
         int sliderX = popupX + scaledWidth - SETTINGS_SLIDER_WIDTH - 20;
         String text = valueText == null ? "" : valueText;
-        int textWidth = this.textRenderer.getWidth(text);
+        int textWidth = this.font.width(text);
         int boxWidth = Math.max(32, textWidth + 8);
         int boxHeight = 16;
         int unitGap = 6;
-        int unitWidth = this.textRenderer.getWidth("blocks");
+        int unitWidth = this.font.width("blocks");
         int boxX = sliderX - boxWidth - unitGap - unitWidth - 4;
         int boxY = centerY - boxHeight / 2;
         return new int[]{boxX, boxY, boxWidth, boxHeight};
@@ -6968,7 +6966,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private void updateNodeDelayFromMouse(int mouseX, int popupX, int popupWidth) {
         int sliderX = popupX + popupWidth - SETTINGS_SLIDER_WIDTH - 20;
-        int localX = MathHelper.clamp(mouseX - sliderX, 0, SETTINGS_SLIDER_WIDTH);
+        int localX = Mth.clamp(mouseX - sliderX, 0, SETTINGS_SLIDER_WIDTH);
         float t = SETTINGS_SLIDER_WIDTH <= 0 ? 0f : localX / (float) SETTINGS_SLIDER_WIDTH;
         int value = NODE_DELAY_MIN_MS + Math.round(t * (NODE_DELAY_MAX_MS - NODE_DELAY_MIN_MS));
         if (value != nodeDelayMs) {
@@ -6983,7 +6981,7 @@ public class PathmindVisualEditorScreen extends Screen {
             return;
         }
         int sliderX = popupX + popupWidth - SETTINGS_SLIDER_WIDTH - 20;
-        int localX = MathHelper.clamp(mouseX - sliderX, 0, SETTINGS_SLIDER_WIDTH);
+        int localX = Mth.clamp(mouseX - sliderX, 0, SETTINGS_SLIDER_WIDTH);
         float t = SETTINGS_SLIDER_WIDTH <= 0 ? 0f : localX / (float) SETTINGS_SLIDER_WIDTH;
         int value = CREATE_LIST_RADIUS_MIN + Math.round(t * (CREATE_LIST_RADIUS_MAX - CREATE_LIST_RADIUS_MIN));
         if (value != getCreateListSettingsRadius(node)) {
@@ -7005,7 +7003,7 @@ public class PathmindVisualEditorScreen extends Screen {
         }
         try {
             int parsed = Integer.parseInt(digits);
-            return MathHelper.clamp(parsed, NODE_DELAY_MIN_MS, NODE_DELAY_MAX_MS);
+            return Mth.clamp(parsed, NODE_DELAY_MIN_MS, NODE_DELAY_MAX_MS);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -7025,7 +7023,7 @@ public class PathmindVisualEditorScreen extends Screen {
         }
         try {
             int parsed = Integer.parseInt(digits);
-            return MathHelper.clamp(parsed, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
+            return Mth.clamp(parsed, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -7086,7 +7084,7 @@ public class PathmindVisualEditorScreen extends Screen {
     private int getCreateListSettingsRadius(Node node) {
         if (node == null || node.getType() != NodeType.CREATE_LIST) {
             Integer configured = SettingsManager.getCurrent().createListRadius;
-            return MathHelper.clamp(configured == null ? 64 : configured, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
+            return Mth.clamp(configured == null ? 64 : configured, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
         }
         node.ensureCreateListRadiusParameters();
         double value = 64.0;
@@ -7097,7 +7095,7 @@ public class PathmindVisualEditorScreen extends Screen {
                 value = 64.0;
             }
         }
-        return MathHelper.clamp((int) Math.round(value), CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
+        return Mth.clamp((int) Math.round(value), CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
     }
 
     private void setCreateListCustomRadiusEnabled(Node node, boolean enabled) {
@@ -7115,7 +7113,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void setCreateListSettingsRadius(Node node, int radius) {
-        int clamped = MathHelper.clamp(radius, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
+        int clamped = Mth.clamp(radius, CREATE_LIST_RADIUS_MIN, CREATE_LIST_RADIUS_MAX);
         Settings settings = SettingsManager.getCurrent();
         settings.createListRadius = clamped;
         SettingsManager.save(settings);
@@ -7220,7 +7218,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private void clearSettingsCache() {
-        boolean cleared = Node.clearRecipeCache(this.client);
+        boolean cleared = Node.clearRecipeCache(this.minecraft);
         NodeErrorNotificationOverlay overlay = NodeErrorNotificationOverlay.getInstance();
         if (cleared) {
             overlay.show("Cache cleared.", UITheme.STATE_SUCCESS);
@@ -7313,7 +7311,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return new int[]{rowX, y, rowWidth, SETTINGS_NODE_TYPE_BUTTON_HEIGHT};
     }
 
-    private void renderSettingsNodeTypeSelector(DrawContext context, int mouseX, int mouseY, int contentX, int bodyY, int contentWidth) {
+    private void renderSettingsNodeTypeSelector(GuiGraphics context, int mouseX, int mouseY, int contentX, int bodyY, int contentWidth) {
         int[] selectorBounds = getSettingsNodeTypeSelectorBounds(contentX, bodyY, contentWidth);
         int[] searchBounds = getSettingsNodeTypeSearchFieldBounds(contentX, bodyY, contentWidth);
         boolean searchHovered = isPointInRect(mouseX, mouseY, searchBounds[0], searchBounds[1], searchBounds[2], searchBounds[3]);
@@ -7355,7 +7353,7 @@ public class PathmindVisualEditorScreen extends Screen {
             int textFieldHeight = Math.max(10, SETTINGS_NODE_TYPE_SEARCH_HEIGHT - TEXT_FIELD_VERTICAL_PADDING * 2);
             settingsNodeSearchField.setVisible(true);
             settingsNodeSearchField.setEditable(true);
-            settingsNodeSearchField.setSuggestion(!searchFocused && settingsNodeSearchField.getText().isEmpty() ? "Search node settings" : null);
+            settingsNodeSearchField.setSuggestion(!searchFocused && settingsNodeSearchField.getValue().isEmpty() ? "Search node settings" : null);
             settingsNodeSearchField.setPosition(searchBounds[0] + 8, searchBounds[1] + TEXT_FIELD_VERTICAL_PADDING);
             settingsNodeSearchField.setWidth(Math.max(0, searchBounds[2] - 16));
             settingsNodeSearchField.setHeight(textFieldHeight);
@@ -7407,13 +7405,13 @@ public class PathmindVisualEditorScreen extends Screen {
 
             int labelColor = getPopupAnimatedColor(settingsPopupAnimation, AnimationHelper.lerpColor(UITheme.TEXT_PRIMARY, getAccentColor(), hoverProgress));
             int metaColor = getPopupAnimatedColor(settingsPopupAnimation, AnimationHelper.lerpColor(UITheme.TEXT_TERTIARY, UITheme.TEXT_SECONDARY, hoverProgress));
-            context.drawTextWithShadow(this.textRenderer, Text.literal(type.getDisplayName()),
+            context.drawString(this.font, Component.literal(type.getDisplayName()),
                 bounds[0] + 8, bounds[1] + 6, labelColor);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(getSettingsNodeTypeDescription(type)),
+            context.drawString(this.font, Component.literal(getSettingsNodeTypeDescription(type)),
                 bounds[0] + 8, bounds[1] + 16, metaColor);
         }
         if (filteredTypes.isEmpty()) {
-            context.drawTextWithShadow(this.textRenderer, Text.literal("No matching node settings"),
+            context.drawString(this.font, Component.literal("No matching node settings"),
                 contentX + 8, listTop + 8, getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_TERTIARY));
         }
         context.disableScissor();
@@ -7421,7 +7419,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private List<NodeType> getFilteredSettingsNodeTypes() {
         List<NodeType> filteredTypes = new ArrayList<>();
-        String query = settingsNodeSearchField != null ? settingsNodeSearchField.getText() : "";
+        String query = settingsNodeSearchField != null ? settingsNodeSearchField.getValue() : "";
         String normalizedQuery = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         for (NodeType type : SETTINGS_NODE_TYPES) {
             if (normalizedQuery.isEmpty()) {
@@ -7460,7 +7458,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return new int[]{listX, listY, listWidth, listHeight};
     }
 
-    private void renderSettingsNodeList(DrawContext context, int mouseX, int mouseY, int popupX, int popupY, int scaledWidth, int scaledHeight, int contentX, int bodyY) {
+    private void renderSettingsNodeList(GuiGraphics context, int mouseX, int mouseY, int popupX, int popupY, int scaledWidth, int scaledHeight, int contentX, int bodyY) {
         List<NodeType> settingsNodes = getSettingsNodeTypes();
         int[] listBounds = getSettingsNodeListBounds(popupX, popupY, scaledWidth, scaledHeight, contentX, bodyY);
         int listX = listBounds[0];
@@ -7475,7 +7473,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
         int visibleRows = Math.max(1, listHeight / SETTINGS_NODE_LIST_ROW_HEIGHT);
         int maxScroll = Math.max(0, settingsNodes.size() - visibleRows);
-        settingsNodeListScrollOffset = MathHelper.clamp(settingsNodeListScrollOffset, 0, maxScroll);
+        settingsNodeListScrollOffset = Mth.clamp(settingsNodeListScrollOffset, 0, maxScroll);
 
         UIStyleHelper.drawBeveledPanel(
             context,
@@ -7505,13 +7503,13 @@ public class PathmindVisualEditorScreen extends Screen {
 
             String label = type.getDisplayName();
             String status = editing ? "Editing" : hasEditedNodeSettings(type) ? "Edited" : "";
-            int statusWidth = status.isEmpty() ? 0 : this.textRenderer.getWidth(status);
+            int statusWidth = status.isEmpty() ? 0 : this.font.width(status);
             int maxLabelWidth = Math.max(0, listWidth - 12 - statusWidth - (status.isEmpty() ? 0 : 8));
             drawPopupTextWithEllipsis(context, label, listX + 6, rowY + 6, maxLabelWidth,
                 getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_PRIMARY));
             if (!status.isEmpty()) {
                 int statusColor = editing ? getAccentColor() : getPopupAnimatedColor(settingsPopupAnimation, UITheme.TEXT_TERTIARY);
-                context.drawTextWithShadow(this.textRenderer, Text.literal(status),
+                context.drawString(this.font, Component.literal(status),
                     listX + listWidth - statusWidth - 6, rowY + 6, statusColor);
             }
         }
@@ -7539,7 +7537,7 @@ public class PathmindVisualEditorScreen extends Screen {
         return Math.max(0, contentBottom - bodyBottom + 24);
     }
 
-    private void renderSettingsPopupScrollbar(DrawContext context, int popupX, int popupY, int popupWidth, int popupHeight, int maxScroll) {
+    private void renderSettingsPopupScrollbar(GuiGraphics context, int popupX, int popupY, int popupWidth, int popupHeight, int maxScroll) {
         if (maxScroll <= 0) {
             return;
         }
@@ -7557,14 +7555,14 @@ public class PathmindVisualEditorScreen extends Screen {
         return ScrollbarHelper.metrics(popupX + popupWidth - 12, bodyBounds[1], 4, Math.max(1, bodyBounds[3]), maxScroll, settingsPopupScrollOffset, 20);
     }
 
-    private boolean renderButtonBackground(DrawContext context, int buttonX, int buttonY, int mouseX, int mouseY,
+    private boolean renderButtonBackground(GuiGraphics context, int buttonX, int buttonY, int mouseX, int mouseY,
                                            boolean active, boolean disabled, Object hoverKey) {
         boolean hovered = !disabled && isPointInRect(mouseX, mouseY, buttonX, buttonY, BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE);
         drawToolbarButtonFrame(context, buttonX, buttonY, BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE, hovered, active, disabled, hoverKey);
         return hovered;
     }
 
-    private void drawToolbarButtonFrame(DrawContext context, int x, int y, int width, int height,
+    private void drawToolbarButtonFrame(GuiGraphics context, int x, int y, int width, int height,
                                         boolean hovered, boolean active, boolean disabled, Object hoverKey) {
         int bgColor;
         if (disabled) {
@@ -7734,7 +7732,7 @@ public class PathmindVisualEditorScreen extends Screen {
         settingsNodeSelectorScrollDragging = false;
         settingsNodeSelectorScrollDragOffset = 0;
         if (settingsNodeSearchField != null) {
-            settingsNodeSearchField.setText("");
+            settingsNodeSearchField.setValue("");
             settingsNodeSearchField.setFocused(false);
             settingsNodeSearchField.setVisible(true);
             settingsNodeSearchField.setEditable(true);
@@ -7764,7 +7762,7 @@ public class PathmindVisualEditorScreen extends Screen {
         settingsLastScrollEventMs = 0L;
         settingsLastScrollConsumer = 0;
         if (settingsNodeSearchField != null) {
-            settingsNodeSearchField.setText("");
+            settingsNodeSearchField.setValue("");
             settingsNodeSearchField.setFocused(false);
             settingsNodeSearchField.setVisible(false);
             settingsNodeSearchField.setEditable(false);
@@ -7900,7 +7898,7 @@ public class PathmindVisualEditorScreen extends Screen {
         int delayRowCenterY = (hudDividerY + delayDividerY) / 2;
         int sliderX = popupX + SETTINGS_POPUP_WIDTH - SETTINGS_SLIDER_WIDTH - 20;
         int sliderY = delayRowCenterY - SETTINGS_SLIDER_HEIGHT / 2;
-        String delayText = nodeDelayField != null ? nodeDelayField.getText() : Integer.toString(nodeDelayMs);
+        String delayText = nodeDelayField != null ? nodeDelayField.getValue() : Integer.toString(nodeDelayMs);
         int[] valueBox = getNodeDelayFieldBounds(popupX, SETTINGS_POPUP_WIDTH, delayRowCenterY, delayText);
         int valueBoxX = valueBox[0];
         int valueBoxY = valueBox[1];
@@ -8014,7 +8012,7 @@ public class PathmindVisualEditorScreen extends Screen {
                 int createListRadiusRowCenterY = (createListToggleDividerY + createListRadiusDividerY) / 2;
                 int createListSliderX = popupX + SETTINGS_POPUP_WIDTH - SETTINGS_SLIDER_WIDTH - 20;
                 int createListSliderY = createListRadiusRowCenterY - SETTINGS_SLIDER_HEIGHT / 2;
-                String radiusText = createListRadiusField != null ? createListRadiusField.getText() : Integer.toString(getCreateListSettingsRadius(targetNode));
+                String radiusText = createListRadiusField != null ? createListRadiusField.getValue() : Integer.toString(getCreateListSettingsRadius(targetNode));
                 int[] radiusValueBox = getCreateListRadiusFieldBounds(popupX, SETTINGS_POPUP_WIDTH, createListRadiusRowCenterY, radiusText);
                 if (createListRadiusField != null) {
                     if (bodyHovered && isPointInRect(mouseXi, mouseYi, radiusValueBox[0], radiusValueBox[1], radiusValueBox[2], radiusValueBox[3])) {
@@ -8056,8 +8054,8 @@ public class PathmindVisualEditorScreen extends Screen {
         draggingSidebarNode = null;
         nodeGraph.save();
         ExecutionManager.getInstance().executeGraph(nodeGraph.getNodes(), nodeGraph.getConnections());
-        if (this.client != null) {
-            this.client.setScreen(null);
+        if (this.minecraft != null) {
+            this.minecraft.setScreen(null);
         }
     }
 
@@ -8065,7 +8063,7 @@ public class PathmindVisualEditorScreen extends Screen {
         ExecutionManager.getInstance().requestStopAll();
     }
 
-    private void drawLanguageDropdown(DrawContext context, int x, int y, int width, String currentLang, boolean hovered) {
+    private void drawLanguageDropdown(GuiGraphics context, int x, int y, int width, String currentLang, boolean hovered) {
         // Update dropdown animation
         languageDropdownAnimation.animateTo(languageDropdownOpen ? 1f : 0f, UITheme.TRANSITION_ANIM_MS);
         languageDropdownAnimation.tick();
@@ -8088,14 +8086,14 @@ public class PathmindVisualEditorScreen extends Screen {
         );
 
         int labelColor = settingsPopupAnimation.getAnimatedPopupColor(fieldPalette.textColor());
-        context.drawTextWithShadow(this.textRenderer, Text.literal(currentLang), x + 4, y + 6, labelColor);
+        context.drawString(this.font, Component.literal(currentLang), x + 4, y + 6, labelColor);
 
         int arrowCenterX = x + width - 10;
         int arrowCenterY = y + 10;
         UIStyleHelper.drawChevron(context, arrowCenterX, arrowCenterY, languageDropdownOpen, labelColor);
     }
 
-    private void drawLanguageDropdownOptions(DrawContext context, int x, int y, int width, int mouseX, int mouseY) {
+    private void drawLanguageDropdownOptions(GuiGraphics context, int x, int y, int width, int mouseX, int mouseY) {
         // Get animation progress
         float animProgress = AnimationHelper.easeOutQuad(languageDropdownAnimation.getValue());
 
@@ -8104,7 +8102,7 @@ public class PathmindVisualEditorScreen extends Screen {
             return;
         }
 
-        Object matrices = context.getMatrices();
+        Object matrices = context.pose();
         MatrixStackBridge.push(matrices);
         MatrixStackBridge.translateZ(matrices, 550.0f);
 
@@ -8146,7 +8144,7 @@ public class PathmindVisualEditorScreen extends Screen {
             int optionY = dropdownY + (i * 20);
 
             boolean optionHovered = animProgress >= 1f && mouseX >= x && mouseX <= x + width && mouseY >= optionY && mouseY <= optionY + 20;
-            String currentLang = this.client.getLanguageManager().getLanguage();
+            String currentLang = this.minecraft.getLanguageManager().getSelected();
             boolean selected = lang.equals(currentLang);
             UIStyleHelper.DropdownRowPalette rowPalette = UIStyleHelper.getDropdownRowPalette(getAccentColor(), optionHovered ? 1f : 0f, selected, false);
             UIStyleHelper.drawDropdownRow(
@@ -8163,7 +8161,7 @@ public class PathmindVisualEditorScreen extends Screen {
             );
 
             int textColor = settingsPopupAnimation.getAnimatedPopupColor(selected ? getAccentColor() : rowPalette.textColor());
-            context.drawTextWithShadow(this.textRenderer, Text.literal(langName), x + 4, optionY + 6, textColor);
+            context.drawString(this.font, Component.literal(langName), x + 4, optionY + 6, textColor);
         }
 
         DrawContextBridge.flush(context);
@@ -8173,7 +8171,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private String getLanguageDisplayName(String languageCode) {
-        return Text.translatable("pathmind.language." + languageCode).getString();
+        return Component.translatable("pathmind.language." + languageCode).getString();
     }
 
     private void onLanguageSelected(String languageCode) {
@@ -8182,17 +8180,17 @@ public class PathmindVisualEditorScreen extends Screen {
         SettingsManager.save(currentSettings);
 
         // Update Minecraft's language and reload resources
-        this.client.options.language = languageCode;
-        this.client.getLanguageManager().setLanguage(languageCode);
-        this.client.options.write();
-        this.client.reloadResources();
+        this.minecraft.options.languageCode = languageCode;
+        this.minecraft.getLanguageManager().setSelected(languageCode);
+        this.minecraft.options.save();
+        this.minecraft.reloadResourcePacks();
 
         // Reload the screen to update all text
-        this.client.setScreen(null);
-        this.client.setScreen(new PathmindVisualEditorScreen());
+        this.minecraft.setScreen(null);
+        this.minecraft.setScreen(new PathmindVisualEditorScreen());
     }
 
-    private void drawPencilIcon(DrawContext context, int x, int y, int color) {
+    private void drawPencilIcon(GuiGraphics context, int x, int y, int color) {
         int size = PRESET_RENAME_ICON_SIZE;
         for (int offset = 0; offset < size - 2; offset++) {
             int startX = x + offset;
@@ -8207,7 +8205,7 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(x, y + size - 1, x + 2, y + size, eraserColor);
     }
 
-    private void drawTrashIcon(DrawContext context, int x, int y, int color) {
+    private void drawTrashIcon(GuiGraphics context, int x, int y, int color) {
         int handleWidth = Math.max(2, PRESET_DELETE_ICON_SIZE / 2);
         int handleLeft = x + (PRESET_DELETE_ICON_SIZE - handleWidth) / 2;
         context.fill(handleLeft, y, handleLeft + handleWidth, y + 1, color);
@@ -8220,7 +8218,7 @@ public class PathmindVisualEditorScreen extends Screen {
         context.fill(x + PRESET_DELETE_ICON_SIZE - 3, y + 4, x + PRESET_DELETE_ICON_SIZE - 2, y + PRESET_DELETE_ICON_SIZE - 1, slatColor);
     }
 
-    private void drawCloseXIcon(DrawContext context, int x, int y, int size, int color) {
+    private void drawCloseXIcon(GuiGraphics context, int x, int y, int size, int color) {
         int span = Math.max(4, size);
         for (int i = 0; i < span; i++) {
             context.fill(x + i, y + i, x + i + 1, y + i + 1, color);
@@ -8233,8 +8231,8 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private boolean isTitleHovered(int mouseX, int mouseY) {
-        int textHeight = this.textRenderer.fontHeight;
-        int textWidth = this.textRenderer.getWidth(TITLE_TEXT);
+        int textHeight = this.font.lineHeight;
+        int textWidth = this.font.width(TITLE_TEXT);
         int textX = getTitleTextX();
         int textY = getTitleTextY() - 1;
         int hitboxX = textX - TITLE_INTERACTION_PADDING;
@@ -8245,11 +8243,11 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private int getTitleTextX() {
-        return this.width - 8 - this.textRenderer.getWidth(TITLE_TEXT);
+        return this.width - 8 - this.font.width(TITLE_TEXT);
     }
 
     private int getTitleTextY() {
-        return (TITLE_BAR_HEIGHT - this.textRenderer.fontHeight) / 2 + 1;
+        return (TITLE_BAR_HEIGHT - this.font.lineHeight) / 2 + 1;
     }
 
     private int getPresetBrowserButtonX() {
@@ -8270,17 +8268,15 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private String getModVersion() {
-        Optional<ModContainer> container = FabricLoader.getInstance().getModContainer(PathmindMod.MOD_ID);
-        return container.map(value -> value.getMetadata().getVersion().getFriendlyString()).orElse("Unknown");
+        return LoaderInfo.getModVersion(PathmindMod.MOD_ID).orElse("Unknown");
     }
 
-    private String getFabricLoaderVersion() {
-        Optional<ModContainer> container = FabricLoader.getInstance().getModContainer("fabricloader");
-        return container.map(value -> value.getMetadata().getVersion().getFriendlyString()).orElse("Unknown");
+    private String getNeoForgeVersion() {
+        return LoaderInfo.getModVersion("neoforge").orElse("Unknown");
     }
 
     private String getCurrentMinecraftVersion() {
-        return this.client != null ? this.client.getGameVersion() : "Unknown";
+        return this.minecraft != null ? this.minecraft.getLaunchedVersion() : "Unknown";
     }
 
     private boolean isPointInRect(int mouseX, int mouseY, int x, int y, int width, int height) {

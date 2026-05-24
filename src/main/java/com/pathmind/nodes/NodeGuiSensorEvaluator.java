@@ -1,10 +1,10 @@
 package com.pathmind.nodes;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.ItemStack;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.Slot;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.ItemStack;
 
 final class NodeGuiSensorEvaluator {
     @SuppressWarnings("unused")
@@ -15,11 +15,11 @@ final class NodeGuiSensorEvaluator {
     }
 
     boolean isOpenGuiFilled() {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         if (client == null || client.player == null) {
             return false;
         }
-        ScreenHandler handler = client.player.currentScreenHandler;
+        AbstractContainerMenu handler = client.player.containerMenu;
         if (handler == null) {
             return false;
         }
@@ -28,11 +28,11 @@ final class NodeGuiSensorEvaluator {
             if (slot == null) {
                 continue;
             }
-            if (slot.inventory instanceof PlayerInventory) {
+            if (slot.container instanceof Inventory) {
                 continue;
             }
             hasContainerSlots = true;
-            ItemStack stack = slot.getStack();
+            ItemStack stack = slot.getItem();
             if (stack == null || stack.isEmpty()) {
                 return false;
             }

@@ -4,9 +4,9 @@ import com.pathmind.ui.sidebar.Sidebar;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Field;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -77,8 +77,13 @@ class NodeTypeSearchLabelTest {
     }
 
     private static Map<String, String> loadEnglishTranslations() throws IOException {
-        Path langPath = Path.of("src/main/resources/assets/pathmind/lang/en_us.json");
-        String json = Files.readString(langPath);
+        String resourcePath = "assets/pathmind/lang/en_us.json";
+        InputStream stream = NodeTypeSearchLabelTest.class.getClassLoader().getResourceAsStream(resourcePath);
+        assertNotNull(stream, () -> "Missing resource " + resourcePath);
+        String json;
+        try (stream) {
+            json = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        }
         Map<String, String> translations = new HashMap<>();
         Matcher matcher = LANG_ENTRY_PATTERN.matcher(json);
         while (matcher.find()) {

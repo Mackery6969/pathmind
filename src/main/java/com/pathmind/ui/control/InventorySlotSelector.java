@@ -7,16 +7,15 @@ import com.pathmind.ui.theme.UIStyleHelper;
 import com.pathmind.ui.theme.UITheme;
 import com.pathmind.util.DrawContextBridge;
 import com.pathmind.util.DropdownLayoutHelper;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Supplier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
 
 /**
  * Helper widget for selecting inventory/container slots via a visual grid.
@@ -101,7 +100,7 @@ public class InventorySlotSelector {
         return mode.id;
     }
 
-    public int render(DrawContext context, TextRenderer textRenderer, int x, int y, int width, int mouseX, int mouseY, float alpha) {
+    public int render(GuiGraphics context, Font textRenderer, int x, int y, int width, int mouseX, int mouseY, float alpha) {
         this.renderX = x;
         this.renderY = y;
         this.renderWidth = width;
@@ -109,14 +108,14 @@ public class InventorySlotSelector {
         int sectionY = y;
 
         // Mode label
-        context.drawTextWithShadow(
+        context.drawString(
             textRenderer,
-            Text.translatable("pathmind.inventorySlot.interfaceMode"),
+            Component.translatable("pathmind.inventorySlot.interfaceMode"),
             x,
             sectionY,
             applyAlpha(UITheme.TEXT_PRIMARY, alpha)
         );
-        sectionY += textRenderer.fontHeight + 4;
+        sectionY += textRenderer.lineHeight + 4;
 
         // Mode button
         buttonX = x;
@@ -132,9 +131,9 @@ public class InventorySlotSelector {
         int textColor = AnimationHelper.lerpColor(UITheme.TEXT_PRIMARY, UITheme.TEXT_HEADER, hoverProgress);
         context.fill(buttonX, buttonY, buttonX + buttonWidth, buttonY + buttonHeight, applyAlpha(buttonBg, alpha));
         DrawContextBridge.drawBorder(context, buttonX, buttonY, buttonWidth, buttonHeight, applyAlpha(borderColor, alpha));
-        context.drawTextWithShadow(
+        context.drawString(
             textRenderer,
-            Text.literal(mode.getDisplayName()),
+            Component.literal(mode.getDisplayName()),
             buttonX + MODE_BUTTON_TEXT_PADDING,
             buttonY + 6,
             applyAlpha(textColor, alpha)
@@ -145,20 +144,20 @@ public class InventorySlotSelector {
         int gridHeight = renderGrid(context, textRenderer, sectionY, width, mouseX, mouseY, alpha);
         sectionY += gridHeight + INFO_TEXT_MARGIN;
 
-        String selectionText = Text.translatable("pathmind.inventorySlot.selectedSlot", selectedSlotId).getString();
+        String selectionText = Component.translatable("pathmind.inventorySlot.selectedSlot", selectedSlotId).getString();
         if (selectedSlotIsPlayerSection != null) {
-            selectionText += " " + Text.translatable(selectedSlotIsPlayerSection
+            selectionText += " " + Component.translatable(selectedSlotIsPlayerSection
                 ? "pathmind.inventorySlot.section.inventory"
                 : "pathmind.inventorySlot.section.gui").getString();
         }
-        context.drawTextWithShadow(
+        context.drawString(
             textRenderer,
-            Text.literal(selectionText),
+            Component.literal(selectionText),
             x,
             sectionY,
             applyAlpha(UITheme.TEXT_SECONDARY, alpha)
         );
-        sectionY += textRenderer.fontHeight;
+        sectionY += textRenderer.lineHeight;
 
         if (dropdownOpen || dropdownAnimation.getValue() > 0.001f || dropdownAnimation.isAnimating()) {
             renderDropdown(context, textRenderer, mouseX, mouseY, alpha);
@@ -176,7 +175,7 @@ public class InventorySlotSelector {
         return header + gridHeight + footer;
     }
 
-    private int renderGrid(DrawContext context, TextRenderer textRenderer, int top, int width, int mouseX, int mouseY, float alpha) {
+    private int renderGrid(GuiGraphics context, Font textRenderer, int top, int width, int mouseX, int mouseY, float alpha) {
         InventoryLayout layout = mode.getLayout();
         int backgroundWidth = Math.max(width, layout.width + GRID_PADDING * 2);
         int backgroundHeight = layout.height + GRID_PADDING * 2;
@@ -218,10 +217,10 @@ public class InventorySlotSelector {
             );
 
             String label = String.valueOf(position.slotId);
-            int textWidth = textRenderer.getWidth(label);
+            int textWidth = textRenderer.width(label);
             int textX = slotX + (SLOT_SIZE - textWidth) / 2;
             int textY = slotY + 4;
-            context.drawTextWithShadow(textRenderer, Text.literal(label), textX, textY, applyAlpha(UITheme.TEXT_PRIMARY, alpha));
+            context.drawString(textRenderer, Component.literal(label), textX, textY, applyAlpha(UITheme.TEXT_PRIMARY, alpha));
         }
 
         return backgroundHeight;
@@ -237,7 +236,7 @@ public class InventorySlotSelector {
         return selectedSlotIsPlayerSection == playerSection;
     }
 
-    private void renderDropdown(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY, float alpha) {
+    private void renderDropdown(GuiGraphics context, Font textRenderer, int mouseX, int mouseY, float alpha) {
         dropdownAnimation.animateTo(dropdownOpen ? 1f : 0f, UITheme.TRANSITION_ANIM_MS, AnimationHelper::easeOutQuad);
         dropdownAnimation.tick();
         float animProgress = AnimationHelper.easeOutQuad(dropdownAnimation.getValue());
@@ -248,7 +247,7 @@ public class InventorySlotSelector {
         int dropdownY = buttonY + buttonHeight;
         int dropdownWidth = buttonWidth;
         int totalOptions = InventoryGuiMode.values().length;
-        int screenHeight = MinecraftClient.getInstance().getWindow().getScaledHeight();
+        int screenHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
         DropdownLayoutHelper.Layout layout = DropdownLayoutHelper.calculate(
             totalOptions,
             DROPDOWN_OPTION_HEIGHT,
@@ -264,7 +263,7 @@ public class InventorySlotSelector {
         context.enableScissor(dropdownX, dropdownY, dropdownX + dropdownWidth, dropdownY + animatedHeight + 1);
         context.fill(dropdownX, dropdownY, dropdownX + dropdownWidth, dropdownY + dropdownHeight, applyAlpha(UITheme.BACKGROUND_SIDEBAR, alpha));
         DrawContextBridge.drawBorder(context, dropdownX, dropdownY, dropdownWidth, dropdownHeight, applyAlpha(UITheme.BORDER_DEFAULT, alpha));
-        context.drawHorizontalLine(dropdownX, dropdownX + dropdownWidth, dropdownY + dropdownHeight, applyAlpha(UITheme.BORDER_DEFAULT, alpha));
+        context.hLine(dropdownX, dropdownX + dropdownWidth, dropdownY + dropdownHeight, applyAlpha(UITheme.BORDER_DEFAULT, alpha));
 
         dropdownHoverIndex = -1;
         InventoryGuiMode[] modes = InventoryGuiMode.values();
@@ -285,9 +284,9 @@ public class InventorySlotSelector {
                 bg = UITheme.BACKGROUND_TERTIARY;
             }
             context.fill(dropdownX + 1, optionTop, dropdownX + dropdownWidth - 1, optionTop + DROPDOWN_OPTION_HEIGHT, applyAlpha(bg, alpha));
-            context.drawTextWithShadow(
+            context.drawString(
                 textRenderer,
-                Text.literal(option.getDisplayName()),
+                Component.literal(option.getDisplayName()),
                 dropdownX + MODE_BUTTON_TEXT_PADDING,
                 optionTop + 5,
                 applyAlpha(UITheme.TEXT_PRIMARY, alpha)
@@ -323,7 +322,7 @@ public class InventorySlotSelector {
         int r = (color >> 16) & 0xFF;
         int g = (color >> 8) & 0xFF;
         int b = color & 0xFF;
-        int outA = MathHelper.clamp(Math.round(a * alpha), 0, 255);
+        int outA = Mth.clamp(Math.round(a * alpha), 0, 255);
         return (outA << 24) | (r << 16) | (g << 8) | b;
     }
 
@@ -364,7 +363,7 @@ public class InventorySlotSelector {
         int dropdownY = buttonY + buttonHeight;
         int dropdownWidth = buttonWidth;
         int totalOptions = InventoryGuiMode.values().length;
-        int screenHeight = MinecraftClient.getInstance().getWindow().getScaledHeight();
+        int screenHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
         DropdownLayoutHelper.Layout layout = DropdownLayoutHelper.calculate(
             totalOptions,
             DROPDOWN_OPTION_HEIGHT,
@@ -431,7 +430,7 @@ public class InventorySlotSelector {
         int dropdownY = buttonY + buttonHeight;
         int dropdownWidth = buttonWidth;
         int totalOptions = InventoryGuiMode.values().length;
-        int screenHeight = MinecraftClient.getInstance().getWindow().getScaledHeight();
+        int screenHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
         DropdownLayoutHelper.Layout layout = DropdownLayoutHelper.calculate(
             totalOptions,
             DROPDOWN_OPTION_HEIGHT,
@@ -615,7 +614,7 @@ public class InventorySlotSelector {
         }
 
         String getDisplayName() {
-            return Text.translatable(translationKey).getString();
+            return Component.translatable(translationKey).getString();
         }
 
         InventoryLayout getLayout() {

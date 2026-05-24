@@ -8,27 +8,27 @@ import com.pathmind.util.InventorySlotModeHelper;
 import com.pathmind.util.InputCompatibilityBridge;
 import com.pathmind.util.PlayerInventoryBridge;
 import com.pathmind.util.BlockSelection;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerInteractionManager;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.screen.PlayerScreenHandler;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.Slot;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.InventoryMenu;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 final class NodeInventoryCommandExecutor {
     private final Node owner;
@@ -45,13 +45,13 @@ final class NodeInventoryCommandExecutor {
         if (preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client == null || client.player == null || client.player.networkHandler == null) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        if (client == null || client.player == null || client.player.connection == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
 
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         String itemId = getStringParameter("Item", "").trim();
         int slot;
 
@@ -63,11 +63,11 @@ final class NodeInventoryCommandExecutor {
                 String normalized = sanitized != null && !sanitized.isEmpty()
                     ? normalizeResourceId(sanitized, "minecraft")
                     : candidateId;
-                Identifier identifier = Identifier.tryParse(normalized);
-                if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+                ResourceLocation identifier = ResourceLocation.tryParse(normalized);
+                if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                     continue;
                 }
-                Item targetItem = Registries.ITEM.get(identifier);
+                Item targetItem = BuiltInRegistries.ITEM.get(identifier);
                 foundSlot = findHotbarSlotWithItem(inventory, targetItem);
                 if (foundSlot != -1) {
                     break;
@@ -84,7 +84,7 @@ final class NodeInventoryCommandExecutor {
             int resolvedSlot = parameterData != null && parameterData.slotIndex != null
                 ? parameterData.slotIndex
                 : getIntParameter("Slot", 0);
-            slot = MathHelper.clamp(resolvedSlot, 0, PlayerInventory.getHotbarSize() - 1);
+            slot = Mth.clamp(resolvedSlot, 0, Inventory.getSelectionSize() - 1);
         }
 
         HotbarSlotSynchronizer.selectHotbarSlot(client, slot);
@@ -103,7 +103,7 @@ final class NodeInventoryCommandExecutor {
         if (preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
@@ -126,9 +126,9 @@ final class NodeInventoryCommandExecutor {
             try {
                 for (int i = 0; i < dropIterations; i++) {
                     runOnClientThread(client, () -> {
-                        client.player.dropSelectedItem(dropEntireStack);
-                        client.player.getInventory().markDirty();
-                        client.player.playerScreenHandler.sendContentUpdates();
+                        client.player.drop(dropEntireStack);
+                        client.player.getInventory().setChanged();
+                        client.player.inventoryMenu.broadcastChanges();
                     });
 
                     if (interval > 0.0 && i < dropIterations - 1) {
@@ -147,20 +147,20 @@ final class NodeInventoryCommandExecutor {
         if (preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
 
-        ClientPlayerInteractionManager interactionManager = client.interactionManager;
-        ScreenHandler handler = client.player.currentScreenHandler;
+        MultiPlayerGameMode interactionManager = client.gameMode;
+        AbstractContainerMenu handler = client.player.containerMenu;
         if (interactionManager == null || handler == null) {
             future.completeExceptionally(new RuntimeException("Interaction manager unavailable"));
             return;
         }
 
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         int slotValue = getIntParameter("Slot", 0);
         SlotSelectionType selectionType = resolveInventorySlotSelectionType(0);
         SlotResolution resolution = resolveInventorySlot(handler, inventory, slotValue, selectionType);
@@ -170,26 +170,26 @@ final class NodeInventoryCommandExecutor {
             return;
         }
 
-        interactionManager.clickSlot(
-            handler.syncId,
+        interactionManager.handleInventoryMouseClick(
+            handler.containerId,
             resolution.handlerSlotIndex,
             0,
-            SlotActionType.PICKUP,
+            ClickType.PICKUP,
             client.player
         );
 
-        inventory.markDirty();
-        client.player.playerScreenHandler.sendContentUpdates();
+        inventory.setChanged();
+        client.player.inventoryMenu.broadcastChanges();
         future.complete(null);
     }
 
     void executeClickScreenCommand(CompletableFuture<Void> future) {
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.getWindow() == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
-        if (client.currentScreen == null) {
+        if (client.screen == null) {
             sendNodeErrorMessage(client, tr("pathmind.error.clickScreenRequiresOpenGui"));
             future.complete(null);
             return;
@@ -197,14 +197,14 @@ final class NodeInventoryCommandExecutor {
 
         int guiX = getIntParameter("X", 0);
         int guiY = getIntParameter("Y", 0);
-        net.minecraft.client.util.Window window = client.getWindow();
-        int scaledWidth = Math.max(1, window.getScaledWidth());
-        int scaledHeight = Math.max(1, window.getScaledHeight());
-        guiX = MathHelper.clamp(guiX, 0, Math.max(0, scaledWidth - 1));
-        guiY = MathHelper.clamp(guiY, 0, Math.max(0, scaledHeight - 1));
+        com.mojang.blaze3d.platform.Window window = client.getWindow();
+        int scaledWidth = Math.max(1, window.getGuiScaledWidth());
+        int scaledHeight = Math.max(1, window.getGuiScaledHeight());
+        guiX = Mth.clamp(guiX, 0, Math.max(0, scaledWidth - 1));
+        guiY = Mth.clamp(guiY, 0, Math.max(0, scaledHeight - 1));
 
-        double windowScaleX = window.getWidth() / (double) scaledWidth;
-        double windowScaleY = window.getHeight() / (double) scaledHeight;
+        double windowScaleX = window.getScreenWidth() / (double) scaledWidth;
+        double windowScaleY = window.getScreenHeight() / (double) scaledHeight;
         double windowX = guiX * windowScaleX;
         double windowY = guiY * windowScaleY;
         final int targetGuiX = guiX;
@@ -213,7 +213,7 @@ final class NodeInventoryCommandExecutor {
         client.execute(() -> {
             boolean moved = InputCompatibilityBridge.dispatchCursorPos(client, windowX, windowY);
             boolean pressed = InputCompatibilityBridge.dispatchScreenMouseClicked(
-                client.currentScreen,
+                client.screen,
                 targetGuiX,
                 targetGuiY,
                 GLFW.GLFW_MOUSE_BUTTON_LEFT
@@ -233,14 +233,14 @@ final class NodeInventoryCommandExecutor {
             }
 
             Node.MESSAGE_SCHEDULER.schedule(() -> {
-                net.minecraft.client.MinecraftClient releaseClient = net.minecraft.client.MinecraftClient.getInstance();
+                net.minecraft.client.Minecraft releaseClient = net.minecraft.client.Minecraft.getInstance();
                 if (releaseClient == null) {
                     future.complete(null);
                     return;
                 }
                 releaseClient.execute(() -> {
                     boolean released = InputCompatibilityBridge.dispatchScreenMouseReleased(
-                        releaseClient.currentScreen,
+                        releaseClient.screen,
                         targetGuiX,
                         targetGuiY,
                         GLFW.GLFW_MOUSE_BUTTON_LEFT
@@ -263,26 +263,26 @@ final class NodeInventoryCommandExecutor {
         if (preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
 
-        ClientPlayerInteractionManager interactionManager = client.interactionManager;
-        ScreenHandler handler = client.player.currentScreenHandler;
+        MultiPlayerGameMode interactionManager = client.gameMode;
+        AbstractContainerMenu handler = client.player.containerMenu;
         if (interactionManager == null || handler == null) {
             future.completeExceptionally(new RuntimeException("Interaction manager unavailable"));
             return;
         }
 
-        if (!handler.getCursorStack().isEmpty()) {
+        if (!handler.getCarried().isEmpty()) {
             sendNodeErrorMessage(client, tr("pathmind.error.cursorHoldingStack"));
             future.complete(null);
             return;
         }
 
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         int requestedSourceSlot = getIntParameter("SourceSlot", 0);
         int requestedTargetSlot = getIntParameter("TargetSlot", 0);
 
@@ -334,7 +334,7 @@ final class NodeInventoryCommandExecutor {
             return;
         }
 
-        ItemStack sourceStack = sourceResolution.slot.getStack();
+        ItemStack sourceStack = sourceResolution.slot.getItem();
         if (sourceStack.isEmpty()) {
             sendNodeErrorMessage(client, tr("pathmind.error.moveItemSourceEmpty"));
             future.complete(null);
@@ -366,11 +366,11 @@ final class NodeInventoryCommandExecutor {
                     moveCount
                 );
             } else {
-                interactionManager.clickSlot(
-                    handler.syncId,
+                interactionManager.handleInventoryMouseClick(
+                    handler.containerId,
                     sourceResolution.handlerSlotIndex,
                     0,
-                    SlotActionType.QUICK_MOVE,
+                    ClickType.QUICK_MOVE,
                     client.player
                 );
             }
@@ -386,8 +386,8 @@ final class NodeInventoryCommandExecutor {
             );
         }
 
-        inventory.markDirty();
-        client.player.playerScreenHandler.sendContentUpdates();
+        inventory.setChanged();
+        client.player.inventoryMenu.broadcastChanges();
         future.complete(null);
     }
 
@@ -407,10 +407,10 @@ final class NodeInventoryCommandExecutor {
             || "any".equalsIgnoreCase(countValue.trim());
     }
 
-    private void quickMoveAllMatchingStacks(net.minecraft.client.MinecraftClient client,
-                                            ClientPlayerInteractionManager interactionManager,
-                                            ScreenHandler handler,
-                                            PlayerInventory inventory,
+    private void quickMoveAllMatchingStacks(net.minecraft.client.Minecraft client,
+                                            MultiPlayerGameMode interactionManager,
+                                            AbstractContainerMenu handler,
+                                            Inventory inventory,
                                             Node sourceParameterNode,
                                             SlotSelectionType sourceSelection) {
         if (client == null || client.player == null || interactionManager == null || handler == null || inventory == null || sourceParameterNode == null) {
@@ -430,23 +430,23 @@ final class NodeInventoryCommandExecutor {
                 break;
             }
 
-            ItemStack beforeStack = nextResolution.slot.getStack().copy();
+            ItemStack beforeStack = nextResolution.slot.getItem().copy();
             if (beforeStack.isEmpty()) {
                 break;
             }
 
-            interactionManager.clickSlot(
-                handler.syncId,
+            interactionManager.handleInventoryMouseClick(
+                handler.containerId,
                 nextResolution.handlerSlotIndex,
                 0,
-                SlotActionType.QUICK_MOVE,
+                ClickType.QUICK_MOVE,
                 client.player
             );
 
-            ItemStack afterStack = nextResolution.slot.getStack();
+            ItemStack afterStack = nextResolution.slot.getItem();
             boolean moved = afterStack.isEmpty()
                 || afterStack.getCount() < beforeStack.getCount()
-                || !ItemStack.areItemsAndComponentsEqual(afterStack, beforeStack);
+                || !ItemStack.isSameItemSameComponents(afterStack, beforeStack);
             if (moved) {
                 movedStacks++;
                 stalledAttempts = 0;
@@ -461,10 +461,10 @@ final class NodeInventoryCommandExecutor {
         }
     }
 
-    private void moveRequestedCountToGuiTarget(net.minecraft.client.MinecraftClient client,
-                                               ClientPlayerInteractionManager interactionManager,
-                                               ScreenHandler handler,
-                                               PlayerInventory inventory,
+    private void moveRequestedCountToGuiTarget(net.minecraft.client.Minecraft client,
+                                               MultiPlayerGameMode interactionManager,
+                                               AbstractContainerMenu handler,
+                                               Inventory inventory,
                                                Node sourceParameterNode,
                                                SlotResolution initialSourceResolution,
                                                SlotSelectionType sourceSelection,
@@ -490,7 +490,7 @@ final class NodeInventoryCommandExecutor {
         }
 
         while (remaining > 0 && currentResolution != null && currentResolution.slot != null) {
-            ItemStack source = currentResolution.slot.getStack();
+            ItemStack source = currentResolution.slot.getItem();
             if (source.isEmpty()) {
                 if (!iterateMatchingSources) {
                     break;
@@ -528,9 +528,9 @@ final class NodeInventoryCommandExecutor {
         }
     }
 
-    private SlotResolution findNextMoveItemSourceResolution(net.minecraft.client.MinecraftClient client,
-                                                            ScreenHandler handler,
-                                                            PlayerInventory inventory,
+    private SlotResolution findNextMoveItemSourceResolution(net.minecraft.client.Minecraft client,
+                                                            AbstractContainerMenu handler,
+                                                            Inventory inventory,
                                                             List<String> itemIds,
                                                             boolean anySelection,
                                                             SlotSelectionType selectionType) {
@@ -541,10 +541,10 @@ final class NodeInventoryCommandExecutor {
         if (selectionType == SlotSelectionType.GUI_CONTAINER) {
             for (int i = 0; i < handler.slots.size(); i++) {
                 Slot slot = handler.getSlot(i);
-                if (slot == null || slot.getStack().isEmpty() || !isSlotInSelectionType(slot, selectionType)) {
+                if (slot == null || slot.getItem().isEmpty() || !isSlotInSelectionType(slot, selectionType)) {
                     continue;
                 }
-                if (matchesMoveItemSource(slot.getStack(), itemIds, anySelection)) {
+                if (matchesMoveItemSource(slot.getItem(), itemIds, anySelection)) {
                     return new SlotResolution(slot, i);
                 }
             }
@@ -554,8 +554,8 @@ final class NodeInventoryCommandExecutor {
         if (inventory == null) {
             return null;
         }
-        for (int i = 0; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
             if (stack.isEmpty() || !matchesMoveItemSource(stack, itemIds, anySelection)) {
                 continue;
             }
@@ -564,14 +564,14 @@ final class NodeInventoryCommandExecutor {
                 continue;
             }
             Slot slot = handler.getSlot(handlerSlot);
-            if (slot != null && !slot.getStack().isEmpty() && isSlotInSelectionType(slot, selectionType)) {
+            if (slot != null && !slot.getItem().isEmpty() && isSlotInSelectionType(slot, selectionType)) {
                 return new SlotResolution(slot, handlerSlot);
             }
         }
         return null;
     }
 
-    private SlotResolution findTransferDestinationResolution(ScreenHandler handler,
+    private SlotResolution findTransferDestinationResolution(AbstractContainerMenu handler,
                                                              SlotSelectionType selectionType,
                                                              ItemStack sourceStack,
                                                              int transferAmount) {
@@ -585,16 +585,16 @@ final class NodeInventoryCommandExecutor {
             if (slot == null || !isSlotInSelectionType(slot, selectionType)) {
                 continue;
             }
-            if (!slot.canInsert(sourceStack)) {
+            if (!slot.mayPlace(sourceStack)) {
                 continue;
             }
 
-            ItemStack destinationStack = slot.getStack();
+            ItemStack destinationStack = slot.getItem();
             if (!destinationStack.isEmpty()) {
-                if (!ItemStack.areItemsAndComponentsEqual(destinationStack, sourceStack)) {
+                if (!ItemStack.isSameItemSameComponents(destinationStack, sourceStack)) {
                     continue;
                 }
-                int maxCount = Math.min(slot.getMaxItemCount(sourceStack), sourceStack.getMaxCount());
+                int maxCount = Math.min(slot.getMaxStackSize(sourceStack), sourceStack.getMaxStackSize());
                 int space = Math.max(0, maxCount - destinationStack.getCount());
                 if (space >= transferAmount) {
                     return new SlotResolution(slot, i);
@@ -620,39 +620,39 @@ final class NodeInventoryCommandExecutor {
             return false;
         }
         for (String candidateId : itemIds) {
-            Identifier identifier = Identifier.tryParse(candidateId);
-            if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+            ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
+            if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item candidateItem = Registries.ITEM.get(identifier);
-            if (stack.isOf(candidateItem)) {
+            Item candidateItem = BuiltInRegistries.ITEM.get(identifier);
+            if (stack.is(candidateItem)) {
                 return true;
             }
         }
         return false;
     }
 
-    private void performInventoryTransfer(ClientPlayerInteractionManager interactionManager, ScreenHandler handler,
-                                          PlayerEntity player, int sourceSlot, int targetSlot, int moveCount, boolean moveEntireStack) {
+    private void performInventoryTransfer(MultiPlayerGameMode interactionManager, AbstractContainerMenu handler,
+                                          Player player, int sourceSlot, int targetSlot, int moveCount, boolean moveEntireStack) {
         if (moveEntireStack) {
-            interactionManager.clickSlot(handler.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
-            interactionManager.clickSlot(handler.syncId, targetSlot, 0, SlotActionType.PICKUP, player);
-            interactionManager.clickSlot(handler.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+            interactionManager.handleInventoryMouseClick(handler.containerId, sourceSlot, 0, ClickType.PICKUP, player);
+            interactionManager.handleInventoryMouseClick(handler.containerId, targetSlot, 0, ClickType.PICKUP, player);
+            interactionManager.handleInventoryMouseClick(handler.containerId, sourceSlot, 0, ClickType.PICKUP, player);
             return;
         }
 
-        interactionManager.clickSlot(handler.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+        interactionManager.handleInventoryMouseClick(handler.containerId, sourceSlot, 0, ClickType.PICKUP, player);
         int moved = 0;
         while (moved < moveCount) {
-            int beforeCursor = handler.getCursorStack().getCount();
-            interactionManager.clickSlot(handler.syncId, targetSlot, 1, SlotActionType.PICKUP, player);
-            int afterCursor = handler.getCursorStack().getCount();
+            int beforeCursor = handler.getCarried().getCount();
+            interactionManager.handleInventoryMouseClick(handler.containerId, targetSlot, 1, ClickType.PICKUP, player);
+            int afterCursor = handler.getCarried().getCount();
             if (afterCursor >= beforeCursor) {
                 break;
             }
             moved++;
         }
-        interactionManager.clickSlot(handler.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+        interactionManager.handleInventoryMouseClick(handler.containerId, sourceSlot, 0, ClickType.PICKUP, player);
     }
 
     private SlotSelectionType resolveInventorySlotSelectionType(int parameterSlotIndex) {
@@ -687,12 +687,12 @@ final class NodeInventoryCommandExecutor {
     }
 
     private boolean hasOpenGuiContainer() {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         if (client == null || client.player == null) {
             return false;
         }
-        ScreenHandler handler = client.player.currentScreenHandler;
-        if (handler == null || handler instanceof PlayerScreenHandler) {
+        AbstractContainerMenu handler = client.player.containerMenu;
+        if (handler == null || handler instanceof InventoryMenu) {
             return false;
         }
         for (int i = 0; i < handler.slots.size(); i++) {
@@ -732,11 +732,11 @@ final class NodeInventoryCommandExecutor {
             }
 
             // If no mode specified, detect based on open screen
-            net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+            net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
             if (client != null && client.player != null) {
-                ScreenHandler handler = client.player.currentScreenHandler;
+                AbstractContainerMenu handler = client.player.containerMenu;
                 // If a container is open (not just the player inventory screen)
-                if (handler != null && !(handler instanceof PlayerScreenHandler)) {
+                if (handler != null && !(handler instanceof InventoryMenu)) {
                     return SlotSelectionType.GUI_CONTAINER;
                 }
             }
@@ -763,7 +763,7 @@ final class NodeInventoryCommandExecutor {
         return SlotSelectionType.PLAYER_INVENTORY;
     }
 
-    SlotResolution resolveInventorySlot(ScreenHandler handler, PlayerInventory inventory, int slotValue, SlotSelectionType selectionType) {
+    SlotResolution resolveInventorySlot(AbstractContainerMenu handler, Inventory inventory, int slotValue, SlotSelectionType selectionType) {
         if (handler == null) {
             return null;
         }
@@ -796,7 +796,7 @@ final class NodeInventoryCommandExecutor {
         if (slot == null || selectionType == null) {
             return false;
         }
-        boolean playerInventorySlot = slot.inventory instanceof PlayerInventory;
+        boolean playerInventorySlot = slot.container instanceof Inventory;
         return selectionType == SlotSelectionType.GUI_CONTAINER ? !playerInventorySlot : playerInventorySlot;
     }
 
@@ -841,7 +841,7 @@ final class NodeInventoryCommandExecutor {
     private boolean resolveDropSlotFromItemParameter(Node parameterNode,
                                                      SlotSelectionType selectionType,
                                                      CompletableFuture<Void> future) {
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             if (future != null && !future.isDone()) {
                 future.completeExceptionally(new RuntimeException("Minecraft client not available"));
@@ -861,7 +861,7 @@ final class NodeInventoryCommandExecutor {
             return false;
         }
 
-        ScreenHandler handler = client.player.currentScreenHandler;
+        AbstractContainerMenu handler = client.player.containerMenu;
         int foundSlot = -1;
         String matchedItemId = null;
 
@@ -869,7 +869,7 @@ final class NodeInventoryCommandExecutor {
             if (selectionType == SlotSelectionType.GUI_CONTAINER && handler != null) {
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.getSlot(i);
-                    if (slot != null && !slot.getStack().isEmpty()) {
+                    if (slot != null && !slot.getItem().isEmpty()) {
                         foundSlot = i;
                         break;
                     }
@@ -880,15 +880,15 @@ final class NodeInventoryCommandExecutor {
         }
 
         for (String candidateId : itemIds) {
-            Identifier identifier = Identifier.tryParse(candidateId);
-            if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+            ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
+            if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item candidateItem = Registries.ITEM.get(identifier);
+            Item candidateItem = BuiltInRegistries.ITEM.get(identifier);
             if (selectionType == SlotSelectionType.GUI_CONTAINER && handler != null) {
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.getSlot(i);
-                    if (slot != null && !slot.getStack().isEmpty() && slot.getStack().isOf(candidateItem)) {
+                    if (slot != null && !slot.getItem().isEmpty() && slot.getItem().is(candidateItem)) {
                         foundSlot = i;
                         matchedItemId = candidateId;
                         break;
@@ -921,7 +921,7 @@ final class NodeInventoryCommandExecutor {
         return true;
     }
 
-    private void executeResolvedDropTarget(net.minecraft.client.MinecraftClient client,
+    private void executeResolvedDropTarget(net.minecraft.client.Minecraft client,
                                            RuntimeParameterData parameterData,
                                            CompletableFuture<Void> future) {
         if (client == null || client.player == null) {
@@ -929,9 +929,9 @@ final class NodeInventoryCommandExecutor {
             return;
         }
 
-        ClientPlayerInteractionManager interactionManager = client.interactionManager;
-        ScreenHandler handler = client.player.currentScreenHandler;
-        PlayerInventory inventory = client.player.getInventory();
+        MultiPlayerGameMode interactionManager = client.gameMode;
+        AbstractContainerMenu handler = client.player.containerMenu;
+        Inventory inventory = client.player.getInventory();
         if (interactionManager == null || handler == null || inventory == null) {
             future.completeExceptionally(new RuntimeException("Interaction manager unavailable"));
             return;
@@ -949,7 +949,7 @@ final class NodeInventoryCommandExecutor {
             future.complete(null);
             return;
         }
-        if (resolution.slot.getStack() == null || resolution.slot.getStack().isEmpty()) {
+        if (resolution.slot.getItem() == null || resolution.slot.getItem().isEmpty()) {
             future.complete(null);
             return;
         }
@@ -968,15 +968,15 @@ final class NodeInventoryCommandExecutor {
                 for (int i = 0; i < dropIterations; i++) {
                     final boolean entireStackThisClick = dropEntireStack;
                     runOnClientThread(client, () -> {
-                        interactionManager.clickSlot(
-                            handler.syncId,
+                        interactionManager.handleInventoryMouseClick(
+                            handler.containerId,
                             resolution.handlerSlotIndex,
                             entireStackThisClick ? 1 : 0,
-                            SlotActionType.THROW,
+                            ClickType.THROW,
                             client.player
                         );
-                        inventory.markDirty();
-                        client.player.playerScreenHandler.sendContentUpdates();
+                        inventory.setChanged();
+                        client.player.inventoryMenu.broadcastChanges();
                     });
                     if (interval > 0.0 && i < dropIterations - 1) {
                         Thread.sleep((long) (interval * 1000));
@@ -995,7 +995,7 @@ final class NodeInventoryCommandExecutor {
         if (slotIndex < 0 || slotIndex > 1) {
             return false;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             if (future != null && !future.isDone()) {
                 future.completeExceptionally(new RuntimeException("Minecraft client not available"));
@@ -1012,14 +1012,14 @@ final class NodeInventoryCommandExecutor {
             return false;
         }
 
-        ScreenHandler handler = client.player.currentScreenHandler;
+        AbstractContainerMenu handler = client.player.containerMenu;
 
         int foundSlot = -1;
         if (anySelection) {
             if (selectionType == SlotSelectionType.GUI_CONTAINER && handler != null) {
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.getSlot(i);
-                    if (slot != null && !slot.getStack().isEmpty() && isSlotInSelectionType(slot, selectionType)) {
+                    if (slot != null && !slot.getItem().isEmpty() && isSlotInSelectionType(slot, selectionType)) {
                         foundSlot = i;
                         break;
                     }
@@ -1029,20 +1029,20 @@ final class NodeInventoryCommandExecutor {
             }
         }
         for (String candidateId : itemIds) {
-            Identifier identifier = Identifier.tryParse(candidateId);
-            if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+            ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
+            if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item candidateItem = Registries.ITEM.get(identifier);
+            Item candidateItem = BuiltInRegistries.ITEM.get(identifier);
 
             if (selectionType == SlotSelectionType.GUI_CONTAINER && handler != null) {
                 // Search through all handler slots
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.getSlot(i);
                     if (slot != null
-                        && !slot.getStack().isEmpty()
+                        && !slot.getItem().isEmpty()
                         && isSlotInSelectionType(slot, selectionType)
-                        && slot.getStack().isOf(candidateItem)) {
+                        && slot.getItem().is(candidateItem)) {
                         foundSlot = i;
                         break;
                     }
@@ -1084,7 +1084,7 @@ final class NodeInventoryCommandExecutor {
         if (parameterNode == null) {
             return false;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             if (future != null && !future.isDone()) {
                 future.completeExceptionally(new RuntimeException("Minecraft client not available"));
@@ -1095,7 +1095,7 @@ final class NodeInventoryCommandExecutor {
             runtimeState.runtimeParameterData = new RuntimeParameterData();
         }
 
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         EnumSet<NodeValueTrait> traits = parameterNode.getProvidedTraits();
         boolean isListItem = parameterNode.getType() == NodeType.LIST_ITEM;
         boolean treatAsItem = traits.contains(NodeValueTrait.ITEM)
@@ -1177,16 +1177,16 @@ final class NodeInventoryCommandExecutor {
     private record ItemSearchResult(int slotIndex, Item item, String itemId) {
     }
 
-    private ItemSearchResult findUseItemSlot(PlayerInventory inventory, List<String> itemIds) {
+    private ItemSearchResult findUseItemSlot(Inventory inventory, List<String> itemIds) {
         if (inventory == null || itemIds == null || itemIds.isEmpty()) {
             return null;
         }
         for (String candidateId : itemIds) {
-            Identifier identifier = Identifier.tryParse(candidateId);
-            if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+            ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
+            if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
                 continue;
             }
-            Item candidateItem = Registries.ITEM.get(identifier);
+            Item candidateItem = BuiltInRegistries.ITEM.get(identifier);
             int slot = findAccessibleSlotWithItem(inventory, candidateItem);
             if (slot >= 0) {
                 return new ItemSearchResult(slot, candidateItem, candidateId);
@@ -1195,7 +1195,7 @@ final class NodeInventoryCommandExecutor {
         return null;
     }
 
-    private ItemSearchResult findUseBlockSlot(PlayerInventory inventory, List<BlockSelection> selections) {
+    private ItemSearchResult findUseBlockSlot(Inventory inventory, List<BlockSelection> selections) {
         if (inventory == null || selections == null || selections.isEmpty()) {
             return null;
         }
@@ -1209,7 +1209,7 @@ final class NodeInventoryCommandExecutor {
             }
             int slot = findAccessibleSlotWithItem(inventory, candidateItem);
             if (slot >= 0) {
-                Identifier id = Registries.ITEM.getId(candidateItem);
+                ResourceLocation id = BuiltInRegistries.ITEM.getKey(candidateItem);
                 String itemId = id != null ? id.toString() : selection.getBlockIdString();
                 return new ItemSearchResult(slot, candidateItem, itemId);
             }
@@ -1217,30 +1217,30 @@ final class NodeInventoryCommandExecutor {
         return null;
     }
 
-    private ItemSearchResult findFirstBlockItemSlot(PlayerInventory inventory) {
+    private ItemSearchResult findFirstBlockItemSlot(Inventory inventory) {
         if (inventory == null) {
             return null;
         }
-        int limit = Math.min(PlayerInventory.MAIN_SIZE, inventory.size());
+        int limit = Math.min(Inventory.INVENTORY_SIZE, inventory.getContainerSize());
         for (int slot = 0; slot < limit; slot++) {
-            ItemStack stack = inventory.getStack(slot);
+            ItemStack stack = inventory.getItem(slot);
             if (stack.isEmpty()) {
                 continue;
             }
             Item item = stack.getItem();
             if (item instanceof BlockItem) {
-                Identifier id = Registries.ITEM.getId(item);
+                ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
                 String itemId = id != null ? id.toString() : "";
                 return new ItemSearchResult(slot, item, itemId);
             }
         }
         int offhandIndex = getOffhandInventoryIndex(inventory);
-        if (offhandIndex >= 0 && offhandIndex < inventory.size()) {
-            ItemStack offhandStack = inventory.getStack(offhandIndex);
+        if (offhandIndex >= 0 && offhandIndex < inventory.getContainerSize()) {
+            ItemStack offhandStack = inventory.getItem(offhandIndex);
             if (!offhandStack.isEmpty()) {
                 Item item = offhandStack.getItem();
                 if (item instanceof BlockItem) {
-                    Identifier id = Registries.ITEM.getId(item);
+                    ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
                     String itemId = id != null ? id.toString() : "";
                     return new ItemSearchResult(offhandIndex, item, itemId);
                 }
@@ -1249,45 +1249,45 @@ final class NodeInventoryCommandExecutor {
         return null;
     }
 
-    private int findAccessibleSlotWithItem(PlayerInventory inventory, Item item) {
+    private int findAccessibleSlotWithItem(Inventory inventory, Item item) {
         if (inventory == null || item == null) {
             return -1;
         }
-        for (int slot = 0; slot < PlayerInventory.MAIN_SIZE && slot < inventory.size(); slot++) {
-            ItemStack stack = inventory.getStack(slot);
-            if (!stack.isEmpty() && stack.isOf(item)) {
+        for (int slot = 0; slot < Inventory.INVENTORY_SIZE && slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && stack.is(item)) {
                 return slot;
             }
         }
         int offhandIndex = getOffhandInventoryIndex(inventory);
-        if (offhandIndex >= 0 && offhandIndex < inventory.size()) {
-            ItemStack offhandStack = inventory.getStack(offhandIndex);
-            if (!offhandStack.isEmpty() && offhandStack.isOf(item)) {
+        if (offhandIndex >= 0 && offhandIndex < inventory.getContainerSize()) {
+            ItemStack offhandStack = inventory.getItem(offhandIndex);
+            if (!offhandStack.isEmpty() && offhandStack.is(item)) {
                 return offhandIndex;
             }
         }
         return -1;
     }
 
-    private int findFirstSlotWithItem(PlayerInventory inventory, Item item) {
+    private int findFirstSlotWithItem(Inventory inventory, Item item) {
         if (inventory == null || item == null) {
             return -1;
         }
-        for (int i = 0; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
-            if (!stack.isEmpty() && stack.isOf(item)) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.is(item)) {
                 return i;
             }
         }
         return -1;
     }
 
-    private int findFirstNonEmptySlot(PlayerInventory inventory) {
+    private int findFirstNonEmptySlot(Inventory inventory) {
         if (inventory == null) {
             return -1;
         }
-        for (int i = 0; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
             if (!stack.isEmpty()) {
                 return i;
             }
@@ -1335,15 +1335,15 @@ final class NodeInventoryCommandExecutor {
         return owner.normalizeResourceId(value, defaultNamespace);
     }
 
-    private int findHotbarSlotWithItem(PlayerInventory inventory, Item targetItem) {
+    private int findHotbarSlotWithItem(Inventory inventory, Item targetItem) {
         return owner.findHotbarSlotWithItem(inventory, targetItem);
     }
 
-    private void sendNodeErrorMessage(MinecraftClient client, String message) {
+    private void sendNodeErrorMessage(Minecraft client, String message) {
         owner.sendNodeErrorMessage(client, message);
     }
 
-    private void runOnClientThread(MinecraftClient client, Runnable task) throws InterruptedException {
+    private void runOnClientThread(Minecraft client, Runnable task) throws InterruptedException {
         owner.runOnClientThread(client, task);
     }
 
@@ -1363,11 +1363,11 @@ final class NodeInventoryCommandExecutor {
         return Node.isAnySelectionValue(value);
     }
 
-    private int mapPlayerInventorySlot(ScreenHandler handler, int inventorySlot) {
+    private int mapPlayerInventorySlot(AbstractContainerMenu handler, int inventorySlot) {
         return owner.mapPlayerInventorySlot(handler, inventorySlot);
     }
 
-    private int clampInventorySlot(PlayerInventory inventory, int slot) {
+    private int clampInventorySlot(Inventory inventory, int slot) {
         return owner.clampInventorySlot(inventory, slot);
     }
 
@@ -1395,7 +1395,7 @@ final class NodeInventoryCommandExecutor {
         owner.sendIncompatibleParameterMessage(parameterNode);
     }
 
-    private int getOffhandInventoryIndex(PlayerInventory inventory) {
+    private int getOffhandInventoryIndex(Inventory inventory) {
         return owner.getOffhandInventoryIndex(inventory);
     }
 }

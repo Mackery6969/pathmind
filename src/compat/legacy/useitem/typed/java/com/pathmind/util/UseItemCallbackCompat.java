@@ -1,8 +1,7 @@
 package com.pathmind.util;
 
-import net.fabricmc.fabric.api.event.player.UseItemCallback;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.TypedActionResult;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
 import java.util.function.Consumer;
 
@@ -11,9 +10,10 @@ public final class UseItemCallbackCompat {
     }
 
     public static void register(Consumer<String> eventSink, String eventName) {
-        UseItemCallback.EVENT.register((player, world, hand) -> {
-            eventSink.accept(eventName);
-            return TypedActionResult.pass(player.getStackInHand(hand));
+        NeoForge.EVENT_BUS.addListener((PlayerInteractEvent.RightClickItem event) -> {
+            if (event.getLevel().isClientSide()) {
+                eventSink.accept(eventName);
+            }
         });
     }
 }

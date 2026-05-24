@@ -2,21 +2,20 @@ package com.pathmind.nodes;
 
 import static com.pathmind.util.PathmindI18n.tr;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.ingame.MerchantScreen;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.screen.MerchantScreenHandler;
-import net.minecraft.util.Identifier;
-import net.minecraft.village.TradeOffer;
-import net.minecraft.village.TradeOfferList;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.MerchantScreen;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MerchantMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.trading.MerchantOffer;
+import net.minecraft.world.item.trading.MerchantOffers;
 
 final class NodeVillagerTradeSensorEvaluator {
     private final Node owner;
@@ -26,7 +25,7 @@ final class NodeVillagerTradeSensorEvaluator {
     }
 
     boolean evaluateVillagerTrade() {
-        TradeOfferList tradeOffers = getOpenTradeOffers();
+        MerchantOffers tradeOffers = getOpenTradeOffers();
         if (tradeOffers == null || tradeOffers.isEmpty()) {
             return false;
         }
@@ -38,7 +37,7 @@ final class NodeVillagerTradeSensorEvaluator {
     }
 
     boolean evaluateInStock() {
-        TradeOfferList tradeOffers = getOpenTradeOffers();
+        MerchantOffers tradeOffers = getOpenTradeOffers();
         if (tradeOffers == null || tradeOffers.isEmpty()) {
             return false;
         }
@@ -49,25 +48,25 @@ final class NodeVillagerTradeSensorEvaluator {
         return tradeIndex >= 0
             && tradeIndex < tradeOffers.size()
             && tradeOffers.get(tradeIndex) != null
-            && !tradeOffers.get(tradeIndex).isDisabled();
+            && !tradeOffers.get(tradeIndex).isOutOfStock();
     }
 
-    private TradeOfferList getOpenTradeOffers() {
+    private MerchantOffers getOpenTradeOffers() {
         owner.ensureVillagerTradeNumberParameter();
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         if (client == null) {
             return null;
         }
-        Screen currentScreen = client.currentScreen;
+        Screen currentScreen = client.screen;
         if (!(currentScreen instanceof MerchantScreen merchantScreen)) {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.noVillagerTradingScreen"));
             return null;
         }
-        MerchantScreenHandler screenHandler = merchantScreen.getScreenHandler();
+        MerchantMenu screenHandler = merchantScreen.getMenu();
         if (screenHandler == null) {
             return null;
         }
-        return screenHandler.getRecipes();
+        return screenHandler.getOffers();
     }
 
     private String getTradeKeySellItemId(String tradeKey) {
@@ -97,12 +96,12 @@ final class NodeVillagerTradeSensorEvaluator {
         if (stack == null || stack.isEmpty()) {
             return "none@0";
         }
-        Identifier id = Registries.ITEM.getId(stack.getItem());
+        ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
         String itemId = id.toString();
         return itemId + "@" + stack.getCount();
     }
 
-    int findTradeIndexFromLegacySelection(TradeOfferList tradeOffers, boolean requireInStock, boolean requireAffordable) {
+    int findTradeIndexFromLegacySelection(MerchantOffers tradeOffers, boolean requireInStock, boolean requireAffordable) {
         List<Integer> matches = findTradeIndexesFromLegacySelection(tradeOffers, requireInStock, requireAffordable);
         return matches.isEmpty() ? -1 : matches.getFirst();
     }
@@ -126,7 +125,7 @@ final class NodeVillagerTradeSensorEvaluator {
         return selections.size() > 1;
     }
 
-    private List<Integer> findTradeIndexesFromLegacySelection(TradeOfferList tradeOffers,
+    private List<Integer> findTradeIndexesFromLegacySelection(MerchantOffers tradeOffers,
                                                               boolean requireInStock,
                                                               boolean requireAffordable) {
         if (tradeOffers == null || tradeOffers.isEmpty()) {
@@ -171,10 +170,10 @@ final class NodeVillagerTradeSensorEvaluator {
             }
         }
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        MerchantScreenHandler screenHandler = null;
-        if (client != null && client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.MerchantScreen merchantScreen) {
-            screenHandler = merchantScreen.getScreenHandler();
+        Minecraft client = Minecraft.getInstance();
+        MerchantMenu screenHandler = null;
+        if (client != null && client.screen instanceof net.minecraft.client.gui.screens.inventory.MerchantScreen merchantScreen) {
+            screenHandler = merchantScreen.getMenu();
         }
 
         List<Integer> matches = new ArrayList<>();
@@ -188,7 +187,7 @@ final class NodeVillagerTradeSensorEvaluator {
 
         for (String desired : orderedSelections) {
             for (int i = 0; i < tradeOffers.size(); i++) {
-                TradeOffer offer = tradeOffers.get(i);
+                MerchantOffer offer = tradeOffers.get(i);
                 if (!isLegacyTradeSelectionMatch(client, screenHandler, offer, desired, requireInStock, requireAffordable)) {
                     continue;
                 }
@@ -203,7 +202,7 @@ final class NodeVillagerTradeSensorEvaluator {
         }
 
         for (int i = 0; i < tradeOffers.size(); i++) {
-            TradeOffer offer = tradeOffers.get(i);
+            MerchantOffer offer = tradeOffers.get(i);
             if (isLegacyTradeSelectionMatch(client, screenHandler, offer, null, requireInStock, requireAffordable)) {
                 matches.add(i);
             }
@@ -212,16 +211,16 @@ final class NodeVillagerTradeSensorEvaluator {
         return matches;
     }
 
-    private boolean isLegacyTradeSelectionMatch(MinecraftClient client,
-                                                MerchantScreenHandler screenHandler,
-                                                TradeOffer offer,
+    private boolean isLegacyTradeSelectionMatch(Minecraft client,
+                                                MerchantMenu screenHandler,
+                                                MerchantOffer offer,
                                                 String desiredSelection,
                                                 boolean requireInStock,
                                                 boolean requireAffordable) {
         if (offer == null) {
             return false;
         }
-        if (requireInStock && offer.isDisabled()) {
+        if (requireInStock && offer.isOutOfStock()) {
             return false;
         }
         if (requireAffordable && (client == null || client.player == null || screenHandler == null
@@ -232,9 +231,9 @@ final class NodeVillagerTradeSensorEvaluator {
             return true;
         }
         String offerKey = buildTradeKey(
-            offer.getDisplayedFirstBuyItem(),
-            offer.getDisplayedSecondBuyItem(),
-            offer.getSellItem()
+            offer.getCostA(),
+            offer.getCostB(),
+            offer.getResult()
         );
         if (desiredSelection.contains("|") && desiredSelection.contains("@")) {
             return desiredSelection.equals(offerKey);

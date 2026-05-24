@@ -8,33 +8,32 @@ import com.pathmind.util.BlockSelection;
 import com.pathmind.util.HotbarSlotSynchronizer;
 import com.pathmind.util.GameProfileCompatibilityBridge;
 import com.pathmind.util.PlayerInventoryBridge;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.network.ClientPlayerInteractionManager;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
-import net.minecraft.registry.Registries;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
-
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.protocol.game.ServerboundSwingPacket;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 final class NodeWorldActionCommandExecutor {
     private static final long ITEM_USE_SYNC_TIMEOUT_MS = 300L;
@@ -49,13 +48,13 @@ final class NodeWorldActionCommandExecutor {
         if (owner.preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client == null || client.player == null || client.interactionManager == null) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        if (client == null || client.player == null || client.gameMode == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
 
-        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
+        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
         int configuredCount = Math.max(0, owner.getIntParameter("RepeatCount", 1));
         boolean useUntilEmpty = owner.getBooleanParameter("UseUntilEmpty", false);
         boolean stopIfUnavailable = owner.getBooleanParameter("StopIfUnavailable", true);
@@ -89,12 +88,12 @@ final class NodeWorldActionCommandExecutor {
                 boolean previousSneak = false;
 
                 if (sneakWhileUsing) {
-                    previousSneak = owner.supplyFromClient(client, () -> client.player.isSneaking());
+                    previousSneak = owner.supplyFromClient(client, () -> client.player.isShiftKeyDown());
                 }
 
                 int iteration = 0;
                 while (iteration < maxIterations) {
-                    ItemStack stack = owner.supplyFromClient(client, () -> client.player.getStackInHand(hand).copy());
+                    ItemStack stack = owner.supplyFromClient(client, () -> client.player.getItemInHand(hand).copy());
                     if ((stack == null || stack.isEmpty()) && stopIfUnavailable) {
                         break;
                     }
@@ -105,28 +104,28 @@ final class NodeWorldActionCommandExecutor {
 
                     owner.runOnClientThread(client, () -> {
                         boolean performed = false;
-                        HitResult target = client.crosshairTarget;
+                        HitResult target = client.hitResult;
                         if (allowEntity && target instanceof EntityHitResult entityHit) {
-                            ActionResult entityResult = client.interactionManager.interactEntity(client.player, entityHit.getEntity(), hand);
-                            performed = entityResult.isAccepted();
+                            InteractionResult entityResult = client.gameMode.interact(client.player, entityHit.getEntity(), hand);
+                            performed = entityResult.consumesAction();
                         }
                         BlockHitResult blockHit = resolveFreshBlockHit(client, target);
                         if (!performed && allowBlock && blockHit != null) {
-                            ActionResult blockResult = client.interactionManager.interactBlock(client.player, hand, blockHit);
-                            performed = blockResult.isAccepted();
+                            InteractionResult blockResult = client.gameMode.useItemOn(client.player, hand, blockHit);
+                            performed = blockResult.consumesAction();
                         }
                         if (!performed) {
-                            client.interactionManager.interactItem(client.player, hand);
+                            client.gameMode.useItem(client.player, hand);
                         }
 
-                        if (durationSeconds > 0.0 && client.options != null && client.options.useKey != null) {
-                            client.options.useKey.setPressed(true);
+                        if (durationSeconds > 0.0 && client.options != null && client.options.keyUse != null) {
+                            client.options.keyUse.setDown(true);
                         }
 
                         if (swingAfterUse) {
-                            client.player.swingHand(hand);
-                            if (client.player.networkHandler != null) {
-                                client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
+                            client.player.swing(hand);
+                            if (client.player.connection != null) {
+                                client.player.connection.send(new ServerboundSwingPacket(hand));
                             }
                         }
                     });
@@ -134,8 +133,8 @@ final class NodeWorldActionCommandExecutor {
                     if (durationSeconds > 0.0) {
                         Thread.sleep((long) (durationSeconds * 1000));
                         owner.runOnClientThread(client, () -> {
-                            if (client.options != null && client.options.useKey != null) {
-                                client.options.useKey.setPressed(false);
+                            if (client.options != null && client.options.keyUse != null) {
+                                client.options.keyUse.setDown(false);
                             }
                         });
                     }
@@ -148,7 +147,7 @@ final class NodeWorldActionCommandExecutor {
                     }
 
                     if (useUntilEmpty) {
-                        ItemStack afterUse = owner.supplyFromClient(client, () -> client.player.getStackInHand(hand).copy());
+                        ItemStack afterUse = owner.supplyFromClient(client, () -> client.player.getItemInHand(hand).copy());
                         if (afterUse == null || afterUse.isEmpty()) {
                             break;
                         }
@@ -172,12 +171,12 @@ final class NodeWorldActionCommandExecutor {
         }, "Pathmind-Use").start();
     }
 
-    private BlockHitResult resolveFreshBlockHit(net.minecraft.client.MinecraftClient client, HitResult cachedTarget) {
+    private BlockHitResult resolveFreshBlockHit(net.minecraft.client.Minecraft client, HitResult cachedTarget) {
         if (client != null && client.player != null) {
             BlockHitResult freshHit = owner.raycastBlockFromOrientation(
                 client,
-                client.player.getYaw(),
-                client.player.getPitch(),
+                client.player.getYRot(),
+                client.player.getXRot(),
                 0.0
             );
             if (freshHit != null) {
@@ -187,7 +186,7 @@ final class NodeWorldActionCommandExecutor {
         return cachedTarget instanceof BlockHitResult blockHit ? blockHit : null;
     }
 
-    private void waitForItemUseSync(net.minecraft.client.MinecraftClient client, Hand hand, ItemStack beforeUse) throws InterruptedException {
+    private void waitForItemUseSync(net.minecraft.client.Minecraft client, InteractionHand hand, ItemStack beforeUse) throws InterruptedException {
         if (client == null || beforeUse == null || beforeUse.isEmpty() || !mayChangeAfterUse(beforeUse)) {
             return;
         }
@@ -198,9 +197,9 @@ final class NodeWorldActionCommandExecutor {
                 if (client.player == null) {
                     return ItemStack.EMPTY;
                 }
-                return client.player.getStackInHand(hand).copy();
+                return client.player.getItemInHand(hand).copy();
             });
-            if (current == null || !ItemStack.areEqual(current, beforeUse)) {
+            if (current == null || !ItemStack.matches(current, beforeUse)) {
                 return;
             }
             Thread.sleep(Node.CONTROL_POLL_INTERVAL_MS);
@@ -211,8 +210,8 @@ final class NodeWorldActionCommandExecutor {
         if (stack == null || stack.isEmpty()) {
             return false;
         }
-        return stack.isDamageable()
-            || stack.getMaxCount() > 1
+        return stack.isDamageableItem()
+            || stack.getMaxStackSize() > 1
             || hasRecipeRemainder(stack.getItem())
             || isKnownStatefulUseItem(stack.getItem());
     }
@@ -242,9 +241,9 @@ final class NodeWorldActionCommandExecutor {
             || item == Items.MILK_BUCKET;
     }
 
-    private boolean prepareSelectedItemForUse(net.minecraft.client.MinecraftClient client,
+    private boolean prepareSelectedItemForUse(net.minecraft.client.Minecraft client,
                                               RuntimeParameterData parameterData,
-                                              Hand hand,
+                                              InteractionHand hand,
                                               CompletableFuture<Void> future) {
         if (client == null || client.player == null || parameterData == null || parameterData.slotIndex == null) {
             return true;
@@ -256,10 +255,10 @@ final class NodeWorldActionCommandExecutor {
             }
             return false;
         }
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         int clampedSlot = owner.clampInventorySlot(inventory, parameterData.slotIndex);
-        boolean armorSlot = clampedSlot >= PlayerInventory.MAIN_SIZE
-            && clampedSlot < PlayerInventory.MAIN_SIZE + Node.PLAYER_ARMOR_SLOT_COUNT;
+        boolean armorSlot = clampedSlot >= Inventory.INVENTORY_SIZE
+            && clampedSlot < Inventory.INVENTORY_SIZE + Node.PLAYER_ARMOR_SLOT_COUNT;
         if (armorSlot) {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.useCannotActivateArmorSlots"));
             if (future != null && !future.isDone()) {
@@ -268,7 +267,7 @@ final class NodeWorldActionCommandExecutor {
             return false;
         }
 
-        ItemStack stack = inventory.getStack(clampedSlot);
+        ItemStack stack = inventory.getItem(clampedSlot);
         if (stack.isEmpty()) {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.selectedSlotEmpty", owner.getType().getDisplayName()));
             if (future != null && !future.isDone()) {
@@ -278,7 +277,7 @@ final class NodeWorldActionCommandExecutor {
         }
 
         boolean prepared;
-        if (hand == Hand.OFF_HAND) {
+        if (hand == InteractionHand.OFF_HAND) {
             prepared = ensureStackEquippedInOffhand(client, inventory, clampedSlot, stack);
         } else {
             prepared = ensureStackSelectedInMainHand(client, inventory, clampedSlot, stack);
@@ -293,14 +292,14 @@ final class NodeWorldActionCommandExecutor {
         return prepared;
     }
 
-    boolean ensureStackSelectedInMainHand(net.minecraft.client.MinecraftClient client,
-                                                  PlayerInventory inventory,
+    boolean ensureStackSelectedInMainHand(net.minecraft.client.Minecraft client,
+                                                  Inventory inventory,
                                                   int slotIndex,
                                                   ItemStack stack) {
         if (client == null || client.player == null || inventory == null || stack == null) {
             return false;
         }
-        int hotbarSize = PlayerInventory.getHotbarSize();
+        int hotbarSize = Inventory.getSelectionSize();
         int targetSlot = slotIndex;
         if (slotIndex >= hotbarSize) {
             targetSlot = moveInventoryStackToHotbar(client, inventory, slotIndex, stack.getItem());
@@ -311,8 +310,8 @@ final class NodeWorldActionCommandExecutor {
         return HotbarSlotSynchronizer.selectHotbarSlot(client, targetSlot);
     }
 
-    private boolean ensureStackEquippedInOffhand(net.minecraft.client.MinecraftClient client,
-                                                 PlayerInventory inventory,
+    private boolean ensureStackEquippedInOffhand(net.minecraft.client.Minecraft client,
+                                                 Inventory inventory,
                                                  int slotIndex,
                                                  ItemStack stack) {
         if (client == null || client.player == null || inventory == null || stack == null) {
@@ -325,11 +324,11 @@ final class NodeWorldActionCommandExecutor {
         if (slotIndex == offhandIndex) {
             return true;
         }
-        if (slotIndex >= PlayerInventory.MAIN_SIZE) {
+        if (slotIndex >= Inventory.INVENTORY_SIZE) {
             return false;
         }
-        ClientPlayerInteractionManager interactionManager = client.interactionManager;
-        ScreenHandler handler = client.player.playerScreenHandler;
+        MultiPlayerGameMode interactionManager = client.gameMode;
+        AbstractContainerMenu handler = client.player.inventoryMenu;
         if (interactionManager == null || handler == null) {
             return false;
         }
@@ -339,12 +338,12 @@ final class NodeWorldActionCommandExecutor {
             return false;
         }
 
-        interactionManager.clickSlot(handler.syncId, sourceHandlerSlot, 0, SlotActionType.PICKUP, client.player);
-        interactionManager.clickSlot(handler.syncId, offhandHandlerSlot, 0, SlotActionType.PICKUP, client.player);
-        interactionManager.clickSlot(handler.syncId, sourceHandlerSlot, 0, SlotActionType.PICKUP, client.player);
+        interactionManager.handleInventoryMouseClick(handler.containerId, sourceHandlerSlot, 0, ClickType.PICKUP, client.player);
+        interactionManager.handleInventoryMouseClick(handler.containerId, offhandHandlerSlot, 0, ClickType.PICKUP, client.player);
+        interactionManager.handleInventoryMouseClick(handler.containerId, sourceHandlerSlot, 0, ClickType.PICKUP, client.player);
 
-        ItemStack offhandStack = client.player.getOffHandStack();
-        return !offhandStack.isEmpty() && offhandStack.isOf(stack.getItem());
+        ItemStack offhandStack = client.player.getOffhandItem();
+        return !offhandStack.isEmpty() && offhandStack.is(stack.getItem());
     }
 
     void executePlaceHandCommand(CompletableFuture<Void> future) {
@@ -374,8 +373,8 @@ final class NodeWorldActionCommandExecutor {
             }
         }
 
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client == null || client.player == null || client.interactionManager == null || client.world == null) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        if (client == null || client.player == null || client.gameMode == null || client.level == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
@@ -389,7 +388,7 @@ final class NodeWorldActionCommandExecutor {
             }
         }
 
-        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
+        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
         boolean sneakWhilePlacing = owner.getBooleanParameter("SneakWhilePlacing", false);
         boolean restoreSneak = owner.getBooleanParameter("RestoreSneakState", true);
         boolean swingOnPlace = owner.getBooleanParameter("SwingOnPlace", true);
@@ -432,39 +431,39 @@ final class NodeWorldActionCommandExecutor {
             }
         }
 
-        boolean previousSneak = client.player.isSneaking();
+        boolean previousSneak = client.player.isShiftKeyDown();
         if (sneakWhilePlacing) {
-            client.player.setSneaking(true);
-            if (client.options != null && client.options.sneakKey != null) {
-                client.options.sneakKey.setPressed(true);
+            client.player.setShiftKeyDown(true);
+            if (client.options != null && client.options.keyShift != null) {
+                client.options.keyShift.setDown(true);
             }
         }
 
         boolean placed = false;
-        HitResult target = client.crosshairTarget;
+        HitResult target = client.hitResult;
         if (target instanceof BlockHitResult blockHit) {
-            ActionResult result = client.interactionManager.interactBlock(client.player, hand, blockHit);
-            placed = result.isAccepted();
+            InteractionResult result = client.gameMode.useItemOn(client.player, hand, blockHit);
+            placed = result.consumesAction();
             if (!placed && !requireBlockHit) {
-                ActionResult fallback = client.interactionManager.interactItem(client.player, hand);
-                placed = fallback.isAccepted();
+                InteractionResult fallback = client.gameMode.useItem(client.player, hand);
+                placed = fallback.consumesAction();
             }
         } else if (!requireBlockHit) {
-            ActionResult fallback = client.interactionManager.interactItem(client.player, hand);
-            placed = fallback.isAccepted();
+            InteractionResult fallback = client.gameMode.useItem(client.player, hand);
+            placed = fallback.consumesAction();
         }
 
         if (swingOnPlace && placed) {
-            client.player.swingHand(hand);
-            if (client.player.networkHandler != null) {
-                client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
+            client.player.swing(hand);
+            if (client.player.connection != null) {
+                client.player.connection.send(new ServerboundSwingPacket(hand));
             }
         }
 
         if (sneakWhilePlacing && restoreSneak) {
-            client.player.setSneaking(previousSneak);
-            if (client.options != null && client.options.sneakKey != null) {
-                client.options.sneakKey.setPressed(previousSneak);
+            client.player.setShiftKeyDown(previousSneak);
+            if (client.options != null && client.options.keyShift != null) {
+                client.options.keyShift.setDown(previousSneak);
             }
         }
 
@@ -472,8 +471,8 @@ final class NodeWorldActionCommandExecutor {
     }
 
     private void handleDirectedPlaceHandPlacement(
-        net.minecraft.client.MinecraftClient client,
-        Hand hand,
+        net.minecraft.client.Minecraft client,
+        InteractionHand hand,
         String parameterBlockId,
         BlockPos targetPos,
         boolean sneakWhilePlacing,
@@ -481,7 +480,7 @@ final class NodeWorldActionCommandExecutor {
         boolean swingOnPlace,
         CompletableFuture<Void> future
     ) {
-        if (client == null || client.player == null || client.world == null || client.interactionManager == null) {
+        if (client == null || client.player == null || client.level == null || client.gameMode == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
@@ -513,7 +512,7 @@ final class NodeWorldActionCommandExecutor {
         final BlockPos placementPos = targetPos;
         final Block resolvedBlock = desiredBlock;
         final String resolvedBlockId = blockIdToUse;
-        final Hand resolvedHand = hand;
+        final InteractionHand resolvedHand = hand;
         final boolean shouldSwing = swingOnPlace;
         final boolean shouldSneak = sneakWhilePlacing;
         final boolean shouldRestoreSneak = restoreSneak;
@@ -523,24 +522,24 @@ final class NodeWorldActionCommandExecutor {
                 BlockHitResult placementHitResult = owner.supplyFromClient(client, () ->
                     owner.preparePlacementHitResult(client, placementPos, resolvedBlockId, resolvedHand, reachSquared)
                 );
-                boolean initialSneak = owner.supplyFromClient(client, () -> client.player.isSneaking());
+                boolean initialSneak = owner.supplyFromClient(client, () -> client.player.isShiftKeyDown());
                 if (shouldSneak) {
                     owner.runOnClientThread(client, () -> owner.applySneakState(client, true));
                     owner.waitForSneakSync(client, initialSneak, true);
                 }
                 try {
                     owner.runOnClientThread(client, () -> {
-                        if (client.world.getBlockState(placementPos).isOf(resolvedBlock)) {
+                        if (client.level.getBlockState(placementPos).is(resolvedBlock)) {
                             return;
                         }
-                        ActionResult result = client.interactionManager.interactBlock(client.player, resolvedHand, placementHitResult);
-                        if (!result.isAccepted()) {
+                        InteractionResult result = client.gameMode.useItemOn(client.player, resolvedHand, placementHitResult);
+                        if (!result.consumesAction()) {
                             throw new Node.PlacementFailure(tr("pathmind.error.placeRejected", formatBlockPos(placementPos), result));
                         }
                         if (shouldSwing) {
-                            client.player.swingHand(resolvedHand);
-                            if (client.player.networkHandler != null) {
-                                client.player.networkHandler.sendPacket(new HandSwingC2SPacket(resolvedHand));
+                            client.player.swing(resolvedHand);
+                            if (client.player.connection != null) {
+                                client.player.connection.send(new ServerboundSwingPacket(resolvedHand));
                             }
                         }
                     });
@@ -567,23 +566,23 @@ final class NodeWorldActionCommandExecutor {
         }, "Pathmind-PlaceHand").start();
     }
 
-    void ensureBlockInHand(net.minecraft.client.MinecraftClient client, String blockId, Hand hand) {
+    void ensureBlockInHand(net.minecraft.client.Minecraft client, String blockId, InteractionHand hand) {
         if (blockId == null || blockId.isEmpty()) {
             return;
         }
 
-        Identifier identifier = BlockSelection.extractBlockIdentifier(blockId);
-        if (identifier == null || !Registries.ITEM.containsId(identifier)) {
+        ResourceLocation identifier = BlockSelection.extractBlockIdentifier(blockId);
+        if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
             throw new Node.PlacementFailure("Cannot place block \"" + blockId + "\": unknown block item.");
         }
 
-        Item targetItem = Registries.ITEM.get(identifier);
-        ItemStack current = client.player.getStackInHand(hand);
-        if (!current.isEmpty() && current.isOf(targetItem)) {
+        Item targetItem = BuiltInRegistries.ITEM.get(identifier);
+        ItemStack current = client.player.getItemInHand(hand);
+        if (!current.isEmpty() && current.is(targetItem)) {
             return;
         }
 
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         int slot = findHotbarSlotWithItem(inventory, targetItem);
         if (slot == -1) {
             int inventorySlot = findMainInventorySlotWithItem(inventory, targetItem);
@@ -601,29 +600,29 @@ final class NodeWorldActionCommandExecutor {
             }
         }
 
-        if (hand == Hand.MAIN_HAND) {
+        if (hand == InteractionHand.MAIN_HAND) {
             HotbarSlotSynchronizer.selectHotbarSlot(client, slot);
             return;
         }
 
-        ItemStack offhandStack = client.player.getOffHandStack();
-        if (!offhandStack.isEmpty() && offhandStack.isOf(targetItem)) {
+        ItemStack offhandStack = client.player.getOffhandItem();
+        if (!offhandStack.isEmpty() && offhandStack.is(targetItem)) {
             return;
         }
 
         HotbarSlotSynchronizer.selectHotbarSlot(client, slot);
     }
 
-    boolean waitForBlockPlacement(net.minecraft.client.MinecraftClient client, BlockPos targetPos, Block desiredBlock) throws InterruptedException {
+    boolean waitForBlockPlacement(net.minecraft.client.Minecraft client, BlockPos targetPos, Block desiredBlock) throws InterruptedException {
         if (client == null || targetPos == null || desiredBlock == null) {
             return false;
         }
         for (int attempt = 0; attempt < 20; attempt++) {
             boolean matches = owner.supplyFromClient(client, () -> {
-                if (client.world == null) {
+                if (client.level == null) {
                     return false;
                 }
-                return client.world.getBlockState(targetPos).isOf(desiredBlock);
+                return client.level.getBlockState(targetPos).is(desiredBlock);
             });
             if (matches) {
                 return true;
@@ -633,30 +632,30 @@ final class NodeWorldActionCommandExecutor {
         return false;
     }
 
-    private boolean waitForUseBlockPlacement(net.minecraft.client.MinecraftClient client,
+    private boolean waitForUseBlockPlacement(net.minecraft.client.Minecraft client,
                                              BlockHitResult blockHit,
                                              Block desiredBlock) throws InterruptedException {
         if (client == null || blockHit == null || desiredBlock == null) {
             return false;
         }
         BlockPos hitPos = blockHit.getBlockPos();
-        Direction side = blockHit.getSide();
+        Direction side = blockHit.getDirection();
         if (hitPos == null || side == null) {
             return false;
         }
 
-        BlockPos offsetPos = hitPos.offset(side);
+        BlockPos offsetPos = hitPos.relative(side);
         for (int attempt = 0; attempt < 20; attempt++) {
             boolean placed = owner.supplyFromClient(client, () -> {
-                if (client.world == null) {
+                if (client.level == null) {
                     return false;
                 }
-                BlockState hitState = client.world.getBlockState(hitPos);
-                if (hitState.isOf(desiredBlock)) {
+                BlockState hitState = client.level.getBlockState(hitPos);
+                if (hitState.is(desiredBlock)) {
                     return true;
                 }
-                BlockState offsetState = client.world.getBlockState(offsetPos);
-                return offsetState.isOf(desiredBlock);
+                BlockState offsetState = client.level.getBlockState(offsetPos);
+                return offsetState.is(desiredBlock);
             });
             if (placed) {
                 return true;
@@ -666,49 +665,49 @@ final class NodeWorldActionCommandExecutor {
         return false;
     }
 
-    int findHotbarSlotWithItem(PlayerInventory inventory, Item targetItem) {
-        int hotbarSize = PlayerInventory.getHotbarSize();
+    int findHotbarSlotWithItem(Inventory inventory, Item targetItem) {
+        int hotbarSize = Inventory.getSelectionSize();
         for (int slot = 0; slot < hotbarSize; slot++) {
-            ItemStack stack = inventory.getStack(slot);
-            if (!stack.isEmpty() && stack.isOf(targetItem)) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && stack.is(targetItem)) {
                 return slot;
             }
         }
         return -1;
     }
 
-    private int findMainInventorySlotWithItem(PlayerInventory inventory, Item targetItem) {
+    private int findMainInventorySlotWithItem(Inventory inventory, Item targetItem) {
         if (inventory == null || targetItem == null) {
             return -1;
         }
-        int hotbarSize = PlayerInventory.getHotbarSize();
-        for (int slot = hotbarSize; slot < PlayerInventory.MAIN_SIZE; slot++) {
-            ItemStack stack = inventory.getStack(slot);
-            if (!stack.isEmpty() && stack.isOf(targetItem)) {
+        int hotbarSize = Inventory.getSelectionSize();
+        for (int slot = hotbarSize; slot < Inventory.INVENTORY_SIZE; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && stack.is(targetItem)) {
                 return slot;
             }
         }
         return -1;
     }
 
-    private int findEmptyHotbarSlot(PlayerInventory inventory) {
+    private int findEmptyHotbarSlot(Inventory inventory) {
         if (inventory == null) {
             return -1;
         }
-        int hotbarSize = PlayerInventory.getHotbarSize();
+        int hotbarSize = Inventory.getSelectionSize();
         for (int slot = 0; slot < hotbarSize; slot++) {
-            if (inventory.getStack(slot).isEmpty()) {
+            if (inventory.getItem(slot).isEmpty()) {
                 return slot;
             }
         }
         return -1;
     }
 
-    private int moveInventoryStackToHotbar(net.minecraft.client.MinecraftClient client, PlayerInventory inventory, int inventorySlot, Item targetItem) {
-        if (client == null || client.player == null || client.interactionManager == null) {
+    private int moveInventoryStackToHotbar(net.minecraft.client.Minecraft client, Inventory inventory, int inventorySlot, Item targetItem) {
+        if (client == null || client.player == null || client.gameMode == null) {
             return -1;
         }
-        ScreenHandler handler = client.player.currentScreenHandler;
+        AbstractContainerMenu handler = client.player.containerMenu;
         if (handler == null) {
             return -1;
         }
@@ -727,34 +726,34 @@ final class NodeWorldActionCommandExecutor {
             return -1;
         }
 
-        client.interactionManager.clickSlot(handler.syncId, handlerSlot, targetHotbarSlot, SlotActionType.SWAP, client.player);
+        client.gameMode.handleInventoryMouseClick(handler.containerId, handlerSlot, targetHotbarSlot, ClickType.SWAP, client.player);
 
-        ItemStack hotbarStack = inventory.getStack(targetHotbarSlot);
-        if (hotbarStack.isEmpty() || !hotbarStack.isOf(targetItem)) {
+        ItemStack hotbarStack = inventory.getItem(targetHotbarSlot);
+        if (hotbarStack.isEmpty() || !hotbarStack.is(targetItem)) {
             return -1;
         }
         return targetHotbarSlot;
     }
 
-    BlockHitResult preparePlacementHitResult(net.minecraft.client.MinecraftClient client, BlockPos targetPos, String blockId, Hand hand, double reachSquared) {
-        if (client.player == null || client.world == null) {
+    BlockHitResult preparePlacementHitResult(net.minecraft.client.Minecraft client, BlockPos targetPos, String blockId, InteractionHand hand, double reachSquared) {
+        if (client.player == null || client.level == null) {
             throw new Node.PlacementFailure("Cannot place block at " + formatBlockPos(targetPos) + ": client world is unavailable.");
         }
 
-        Vec3d eyePos = client.player.getEyePos();
-        Vec3d targetCenter = Vec3d.ofCenter(targetPos);
-        if (eyePos.squaredDistanceTo(targetCenter) > reachSquared) {
+        Vec3 eyePos = client.player.getEyePosition();
+        Vec3 targetCenter = Vec3.atCenterOf(targetPos);
+        if (eyePos.distanceToSqr(targetCenter) > reachSquared) {
             throw new Node.PlacementFailure("Cannot place block at " + formatBlockPos(targetPos) + ": target is out of reach.");
         }
 
-        if (!isBlockReplaceable(client.world, targetPos)) {
-            BlockState occupied = client.world.getBlockState(targetPos);
+        if (!isBlockReplaceable(client.level, targetPos)) {
+            BlockState occupied = client.level.getBlockState(targetPos);
             throw new Node.PlacementFailure(
                 "Cannot place block at " + formatBlockPos(targetPos) + ": target space contains " + describeBlockState(occupied) + "."
             );
         }
 
-        Vec3d preferredLook = null;
+        Vec3 preferredLook = null;
         if (owner.runtimeState().runtimeParameterData != null
             && owner.runtimeState().runtimeParameterData.resolvedYaw != null
             && owner.runtimeState().runtimeParameterData.resolvedPitch != null) {
@@ -763,7 +762,7 @@ final class NodeWorldActionCommandExecutor {
             double xDir = -Math.sin(yawRad) * Math.cos(pitchRad);
             double yDir = -Math.sin(pitchRad);
             double zDir = Math.cos(yawRad) * Math.cos(pitchRad);
-            preferredLook = new Vec3d(xDir, yDir, zDir).normalize();
+            preferredLook = new Vec3(xDir, yDir, zDir).normalize();
         }
 
         BlockHitResult surface = createPlacementHitResult(client, targetPos, eyePos, reachSquared, preferredLook);
@@ -773,7 +772,7 @@ final class NodeWorldActionCommandExecutor {
 
         ensureBlockInHand(client, blockId, hand);
 
-        ItemStack stack = client.player.getStackInHand(hand);
+        ItemStack stack = client.player.getItemInHand(hand);
         if (stack.isEmpty()) {
             throw new Node.PlacementFailure("Cannot place block \"" + blockId + "\": the selected hand is empty.");
         }
@@ -792,8 +791,8 @@ final class NodeWorldActionCommandExecutor {
         return surface;
     }
 
-    private BlockHitResult createPlacementHitResult(net.minecraft.client.MinecraftClient client, BlockPos targetPos, Vec3d eyePos, double reachSquared, Vec3d preferredLook) {
-        if (client.player == null || client.world == null) {
+    private BlockHitResult createPlacementHitResult(net.minecraft.client.Minecraft client, BlockPos targetPos, Vec3 eyePos, double reachSquared, Vec3 preferredLook) {
+        if (client.player == null || client.level == null) {
             return null;
         }
 
@@ -802,24 +801,24 @@ final class NodeWorldActionCommandExecutor {
         double bestAlignment = -Double.MAX_VALUE;
 
         for (Direction direction : Direction.values()) {
-            BlockPos supportPos = targetPos.offset(direction);
-            BlockState supportState = client.world.getBlockState(supportPos);
+            BlockPos supportPos = targetPos.relative(direction);
+            BlockState supportState = client.level.getBlockState(supportPos);
             if (supportState.isAir()) {
                 continue;
             }
-            if (supportState.getCollisionShape(client.world, supportPos).isEmpty()) {
+            if (supportState.getCollisionShape(client.level, supportPos).isEmpty()) {
                 continue;
             }
 
             Direction placementSide = direction.getOpposite();
-            Vec3d faceCenter = Vec3d.ofCenter(supportPos).add(
-                placementSide.getOffsetX() * 0.5D,
-                placementSide.getOffsetY() * 0.5D,
-                placementSide.getOffsetZ() * 0.5D
+            Vec3 faceCenter = Vec3.atCenterOf(supportPos).add(
+                placementSide.getStepX() * 0.5D,
+                placementSide.getStepY() * 0.5D,
+                placementSide.getStepZ() * 0.5D
             );
 
-            Vec3d faceAxisA;
-            Vec3d faceAxisB;
+            Vec3 faceAxisA;
+            Vec3 faceAxisB;
             switch (placementSide.getAxis()) {
                 case X -> {
                     faceAxisA = FACE_AXIS_Y;
@@ -835,15 +834,15 @@ final class NodeWorldActionCommandExecutor {
                 }
             }
 
-            Vec3d placementNormal = Vec3d.of(placementSide.getVector());
-            double faceAlignment = preferredLook != null ? preferredLook.dotProduct(placementNormal) : 0.0D;
+            Vec3 placementNormal = Vec3.atLowerCornerOf(placementSide.getNormal());
+            double faceAlignment = preferredLook != null ? preferredLook.dot(placementNormal) : 0.0D;
 
             for (double offsetA : FACE_OFFSET_SAMPLES) {
                 for (double offsetB : FACE_OFFSET_SAMPLES) {
-                    Vec3d samplePoint = faceCenter
-                        .add(faceAxisA.multiply(offsetA))
-                        .add(faceAxisB.multiply(offsetB));
-                    double distance = eyePos.squaredDistanceTo(samplePoint);
+                    Vec3 samplePoint = faceCenter
+                        .add(faceAxisA.scale(offsetA))
+                        .add(faceAxisB.scale(offsetB));
+                    double distance = eyePos.distanceToSqr(samplePoint);
                     if (distance > reachSquared) {
                         continue;
                     }
@@ -865,7 +864,7 @@ final class NodeWorldActionCommandExecutor {
                         bestDistance = distance;
                         bestAlignment = faceAlignment;
                         bestResult = new BlockHitResult(
-                            samplePoint.subtract(placementNormal.multiply(0.001D)),
+                            samplePoint.subtract(placementNormal.scale(0.001D)),
                             placementSide,
                             supportPos,
                             false
@@ -879,27 +878,27 @@ final class NodeWorldActionCommandExecutor {
 
     private static final long SNEAK_SYNC_DELAY_MS = 75L;
     private static final double[] FACE_OFFSET_SAMPLES = {0.0D, 0.32D, -0.32D, 0.48D, -0.48D};
-    private static final Vec3d FACE_AXIS_X = new Vec3d(1.0D, 0.0D, 0.0D);
-    private static final Vec3d FACE_AXIS_Y = new Vec3d(0.0D, 1.0D, 0.0D);
-    private static final Vec3d FACE_AXIS_Z = new Vec3d(0.0D, 0.0D, 1.0D);
+    private static final Vec3 FACE_AXIS_X = new Vec3(1.0D, 0.0D, 0.0D);
+    private static final Vec3 FACE_AXIS_Y = new Vec3(0.0D, 1.0D, 0.0D);
+    private static final Vec3 FACE_AXIS_Z = new Vec3(0.0D, 0.0D, 1.0D);
 
-    private boolean canPlaceBlockAt(net.minecraft.client.MinecraftClient client, Hand hand, ItemStack stack, BlockItem blockItem, BlockHitResult hitResult) {
-        if (client.player == null || client.world == null) {
+    private boolean canPlaceBlockAt(net.minecraft.client.Minecraft client, InteractionHand hand, ItemStack stack, BlockItem blockItem, BlockHitResult hitResult) {
+        if (client.player == null || client.level == null) {
             return false;
         }
 
-        ItemPlacementContext placementContext = new ItemPlacementContext(client.player, hand, stack.copy(), hitResult);
+        BlockPlaceContext placementContext = new BlockPlaceContext(client.player, hand, stack.copy(), hitResult);
         if (!placementContext.canPlace()) {
             return false;
         }
 
         Block block = blockItem.getBlock();
-        BlockState placementState = block.getPlacementState(placementContext);
+        BlockState placementState = block.getStateForPlacement(placementContext);
         if (placementState == null) {
             return false;
         }
 
-        return placementState.canPlaceAt(client.world, placementContext.getBlockPos());
+        return placementState.canSurvive(client.level, placementContext.getClickedPos());
     }
 
     static String formatBlockPos(BlockPos pos) {
@@ -914,15 +913,15 @@ final class NodeWorldActionCommandExecutor {
             return null;
         }
 
-        Identifier identifier = BlockSelection.extractBlockIdentifier(blockId);
-        if (identifier == null || !Registries.BLOCK.containsId(identifier)) {
+        ResourceLocation identifier = BlockSelection.extractBlockIdentifier(blockId);
+        if (identifier == null || !BuiltInRegistries.BLOCK.containsKey(identifier)) {
             return null;
         }
 
-        return Registries.BLOCK.get(identifier);
+        return BuiltInRegistries.BLOCK.get(identifier);
     }
 
-    double getPlacementReachSquared(net.minecraft.client.MinecraftClient client) {
+    double getPlacementReachSquared(net.minecraft.client.Minecraft client) {
         return Node.DEFAULT_REACH_DISTANCE_SQUARED;
     }
 
@@ -930,11 +929,11 @@ final class NodeWorldActionCommandExecutor {
         if (state == null) {
             return "an unknown block";
         }
-        Identifier id = Registries.BLOCK.getId(state.getBlock());
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
         return id != null ? id.toString() : "an unknown block";
     }
 
-    boolean isBlockReplaceable(World world, BlockPos targetPos) {
+    boolean isBlockReplaceable(Level world, BlockPos targetPos) {
         BlockState state = world.getBlockState(targetPos);
         if (state.isAir()) {
             return true;
@@ -947,12 +946,12 @@ final class NodeWorldActionCommandExecutor {
         return state.getCollisionShape(world, targetPos).isEmpty();
     }
 
-    boolean hasPlacementSupport(World world, BlockPos targetPos) {
+    boolean hasPlacementSupport(Level world, BlockPos targetPos) {
         if (world == null || targetPos == null) {
             return false;
         }
         for (Direction direction : Direction.values()) {
-            BlockPos supportPos = targetPos.offset(direction);
+            BlockPos supportPos = targetPos.relative(direction);
             BlockState supportState = world.getBlockState(supportPos);
             if (!supportState.isAir() && !supportState.getCollisionShape(world, supportPos).isEmpty()) {
                 return true;
@@ -1006,7 +1005,7 @@ final class NodeWorldActionCommandExecutor {
         NodeParameter xParam = owner.getParameter("X");
         NodeParameter yParam = owner.getParameter("Y");
         NodeParameter zParam = owner.getParameter("Z");
-        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
+        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
 
         if (blockParam != null) block = blockParam.getStringValue();
         if (xParam != null) x = xParam.getIntValue();
@@ -1027,8 +1026,8 @@ final class NodeWorldActionCommandExecutor {
             }
         }
 
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client == null || client.player == null || client.player.networkHandler == null || client.interactionManager == null || client.world == null) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        if (client == null || client.player == null || client.player.connection == null || client.gameMode == null || client.level == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
@@ -1067,7 +1066,7 @@ final class NodeWorldActionCommandExecutor {
 
         if (blockParameterNode != null && isBlockPlacementParameter(blockParameterNode)) {
             try {
-                ensureBlockInHand(client, block, Hand.MAIN_HAND);
+                ensureBlockInHand(client, block, InteractionHand.MAIN_HAND);
             } catch (Node.PlacementFailure e) {
                 owner.sendNodeErrorMessage(client, e.getMessage());
                 future.complete(null);
@@ -1083,10 +1082,10 @@ final class NodeWorldActionCommandExecutor {
             try {
                 float yaw = parameterData != null && parameterData.resolvedYaw != null
                     ? parameterData.resolvedYaw
-                    : client.player.getYaw();
+                    : client.player.getYRot();
                 float pitch = parameterData != null && parameterData.resolvedPitch != null
                     ? parameterData.resolvedPitch
-                    : client.player.getPitch();
+                    : client.player.getXRot();
                 double reachDistance = Math.sqrt(getPlacementReachSquared(client));
                 double lookDistance = parameterData != null && parameterData.resolvedLookDistance != null
                     ? parameterData.resolvedLookDistance
@@ -1096,14 +1095,14 @@ final class NodeWorldActionCommandExecutor {
                 );
                 if (hit != null) {
                     owner.runOnClientThread(client, () -> {
-                        client.player.setYaw(yaw);
-                        client.player.setPitch(pitch);
-                        client.player.setHeadYaw(yaw);
-                        ActionResult result = client.interactionManager.interactBlock(client.player, hand, hit);
-                        if (result.isAccepted()) {
-                            client.player.swingHand(hand);
-                            if (client.player.networkHandler != null) {
-                                client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
+                        client.player.setYRot(yaw);
+                        client.player.setXRot(pitch);
+                        client.player.setYHeadRot(yaw);
+                        InteractionResult result = client.gameMode.useItemOn(client.player, hand, hit);
+                        if (result.consumesAction()) {
+                            client.player.swing(hand);
+                            if (client.player.connection != null) {
+                                client.player.connection.send(new ServerboundSwingPacket(hand));
                             }
                         }
                     });
@@ -1136,7 +1135,7 @@ final class NodeWorldActionCommandExecutor {
         final BlockPos placementPos = targetPos;
         final Block resolvedBlock = desiredBlock;
         final String resolvedBlockId = block;
-        final Hand resolvedHand = hand;
+        final InteractionHand resolvedHand = hand;
         final double resolvedReachSquared = reachSquared;
 
         new Thread(() -> {
@@ -1145,18 +1144,18 @@ final class NodeWorldActionCommandExecutor {
                     preparePlacementHitResult(client, placementPos, resolvedBlockId, resolvedHand, resolvedReachSquared)
                 );
                 owner.runOnClientThread(client, () -> {
-                    if (client.world.getBlockState(placementPos).isOf(resolvedBlock)) {
+                    if (client.level.getBlockState(placementPos).is(resolvedBlock)) {
                         return;
                     }
 
-                    ActionResult result = client.interactionManager.interactBlock(client.player, resolvedHand, placementHitResult);
-                    if (!result.isAccepted()) {
+                    InteractionResult result = client.gameMode.useItemOn(client.player, resolvedHand, placementHitResult);
+                    if (!result.consumesAction()) {
                         throw new Node.PlacementFailure(tr("pathmind.error.placeRejected", formatBlockPos(placementPos), result));
                     }
                     if (client.player != null) {
-                        client.player.swingHand(resolvedHand);
-                        if (client.player.networkHandler != null) {
-                            client.player.networkHandler.sendPacket(new HandSwingC2SPacket(resolvedHand));
+                        client.player.swing(resolvedHand);
+                        if (client.player.connection != null) {
+                            client.player.connection.send(new ServerboundSwingPacket(resolvedHand));
                         }
                     }
                 });
@@ -1231,7 +1230,7 @@ final class NodeWorldActionCommandExecutor {
         return parameterNode != null && parameterNode.getType() == NodeType.PARAM_PLACE_TARGET;
     }
 
-    String resolveBlockIdFromInventorySlotParameter(net.minecraft.client.MinecraftClient client,
+    String resolveBlockIdFromInventorySlotParameter(net.minecraft.client.Minecraft client,
                                                            Node parameterNode) {
         if (client == null || client.player == null || parameterNode == null) {
             return null;
@@ -1241,9 +1240,9 @@ final class NodeWorldActionCommandExecutor {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.onlyPlayerInventorySlots", owner.getType().getDisplayName()));
             return null;
         }
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         int slotValue = owner.clampInventorySlot(inventory, Node.parseNodeInt(parameterNode, "Slot", 0));
-        ItemStack stack = inventory.getStack(slotValue);
+        ItemStack stack = inventory.getItem(slotValue);
         if (stack.isEmpty()) {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.selectedSlotEmpty", owner.getType().getDisplayName()));
             return null;
@@ -1261,7 +1260,7 @@ final class NodeWorldActionCommandExecutor {
             owner.sendNodeErrorMessage(client, tr("pathmind.error.failedPrepareSelectedBlock", owner.getType().getDisplayName()));
             return null;
         }
-        Identifier id = Registries.ITEM.getId(stack.getItem());
+        ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
         return id != null ? id.toString() : null;
     }
 
@@ -1294,19 +1293,19 @@ final class NodeWorldActionCommandExecutor {
         return owner.normalizeResourceId(sanitized, "minecraft");
     }
 
-    String getBlockIdFromHand(net.minecraft.client.MinecraftClient client, Hand hand) {
+    String getBlockIdFromHand(net.minecraft.client.Minecraft client, InteractionHand hand) {
         if (client == null || client.player == null) {
             return null;
         }
-        ItemStack stack = client.player.getStackInHand(hand);
+        ItemStack stack = client.player.getItemInHand(hand);
         if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem)) {
             return null;
         }
-        Identifier id = Registries.ITEM.getId(stack.getItem());
+        ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
         return id != null ? id.toString() : null;
     }
 
-    String resolveAnyBlockId(net.minecraft.client.MinecraftClient client, Hand preferredHand) {
+    String resolveAnyBlockId(net.minecraft.client.Minecraft client, InteractionHand preferredHand) {
         if (client == null || client.player == null) {
             return null;
         }
@@ -1314,16 +1313,16 @@ final class NodeWorldActionCommandExecutor {
         if (fromHand != null && !fromHand.isEmpty()) {
             return fromHand;
         }
-        PlayerInventory inventory = client.player.getInventory();
+        Inventory inventory = client.player.getInventory();
         if (inventory == null) {
             return null;
         }
-        for (int i = 0; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
             if (stack == null || stack.isEmpty() || !(stack.getItem() instanceof BlockItem)) {
                 continue;
             }
-            Identifier id = Registries.ITEM.getId(stack.getItem());
+            ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
             if (id != null) {
                 return id.toString();
             }
@@ -1379,9 +1378,9 @@ final class NodeWorldActionCommandExecutor {
     }
 
     private BlockPos resolveBuildOrigin() {
-        Vec3d targetVector = owner.runtimeState().runtimeParameterData != null ? owner.runtimeState().runtimeParameterData.targetVector : null;
+        Vec3 targetVector = owner.runtimeState().runtimeParameterData != null ? owner.runtimeState().runtimeParameterData.targetVector : null;
         if (targetVector != null) {
-            return BlockPos.ofFloored(targetVector);
+            return BlockPos.containing(targetVector);
         }
 
         switch (owner.getMode()) {
@@ -1411,11 +1410,11 @@ final class NodeWorldActionCommandExecutor {
     }
 
     private BlockPos getPlayerBuildOrigin() {
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         if (client == null || client.player == null) {
             return null;
         }
-        return client.player.getBlockPos();
+        return client.player.blockPosition();
     }
     
     void executeExploreCommand(CompletableFuture<Void> future) {
@@ -1516,7 +1515,7 @@ final class NodeWorldActionCommandExecutor {
             future.completeExceptionally(new RuntimeException("No mode set for FOLLOW node"));
             return;
         }
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
         
         String command;
         switch (owner.getMode()) {

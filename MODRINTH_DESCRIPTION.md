@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://modrinth.com/mod/fabric-api">
-    <img src="https://img.shields.io/badge/Requires-Fabric%20API-2ea44f?style=for-the-badge" />
+  <a href="https://neoforged.net/">
+    <img src="https://img.shields.io/badge/Requires-NeoForge%2021.1%2B-ff6b00?style=for-the-badge" />
   </a>
   <a href="https://discord.gg/7nGRX2d8a6">
     <img src="https://img.shields.io/badge/Discord-Join%20server-5865F2?style=for-the-badge&logo=discord&logoColor=white" />
@@ -68,24 +68,20 @@
 ## Quick Start
 
 ### Prerequisites
-- **Minecraft**: 1.21 through 1.21.11
-- **Fabric Loader**: 0.17.3 or higher
-- **Fabric API**: version matching your Minecraft version
+- **Minecraft**: 1.21.1
+- **NeoForge**: 21.1 or higher
 - **Java**: 21 or higher
 
 ### Installation
 
-1. **Install Fabric Loader**
-   - Download and install Fabric Loader for your Minecraft version
-   - [Download from FabricMC](https://fabricmc.net/use/installer/)
-2. **Install Fabric API**
-   - Download the matching Fabric API release for your Minecraft version
-   - [Download from Modrinth](https://modrinth.com/mod/fabric-api)
-3. **Install Pathmind**
-   - Download the Pathmind jar for your Minecraft version
+1. **Install NeoForge**
+   - Download and install NeoForge for Minecraft 1.21.1
+   - [Download from NeoForge](https://neoforged.net/)
+2. **Install Pathmind**
+   - Download the Pathmind NeoForge jar for Minecraft 1.21.1
    - Place it in your `mods` folder
-4. **Launch and Enjoy**
-   - Start Minecraft with Fabric
+3. **Launch and Enjoy**
+   - Start Minecraft with NeoForge
    - Use your configured keybind to open the visual editor
 
 ## How to Use

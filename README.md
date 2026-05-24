@@ -2,8 +2,8 @@
 
 # Pathmind
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-1.21--1.21.11-00AA00?style=for-the-badge&logo=minecraft)](https://minecraft.net)
-[![Fabric](https://img.shields.io/badge/Fabric-0.17.3%2B-CC6E3E?style=for-the-badge&logo=modrinth)](https://fabricmc.net)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-00AA00?style=for-the-badge&logo=minecraft)](https://minecraft.net)
+[![NeoForge](https://img.shields.io/badge/NeoForge-21.1%2B-FF6B00?style=for-the-badge)](https://neoforged.net)
 [![Java](https://img.shields.io/badge/Java-21+-FF6B6B?style=for-the-badge&logo=openjdk)](https://openjdk.java.net)
 [![License](https://img.shields.io/badge/License-See%20LICENSE-lightgrey?style=for-the-badge)](LICENSE.txt)
 
@@ -84,9 +84,8 @@ Pathmind also adds main-menu integration so the editor is reachable before joini
 
 ### Required
 
-- Minecraft `1.21` through `1.21.11`
-- Fabric Loader `0.17.3` or newer
-- Matching Fabric API
+- Minecraft `1.21.1`
+- NeoForge `21.1` or newer
 - Java `21+`
 
 ### Optional
@@ -96,11 +95,10 @@ Pathmind also adds main-menu integration so the editor is reachable before joini
 
 ### Steps
 
-1. Install Fabric Loader for your target Minecraft version.
-2. Install the matching Fabric API release.
-3. Download the correct Pathmind jar from Modrinth.
-4. Place the jars in your `mods` folder.
-5. Launch the game and open Pathmind with the configured keybind.
+1. Install NeoForge for Minecraft `1.21.1`.
+2. Download the Pathmind NeoForge jar from Modrinth.
+3. Place the jar in your `mods` folder.
+4. Launch the game and open Pathmind with the configured keybind.
 
 ## Workspace Files
 
@@ -115,8 +113,8 @@ Imported marketplace presets and exported graphs also flow through this preset s
 
 ## Compatibility
 
-- Release jars are versioned as `pathmind-<modVersion>+mc<gameVersion>.jar`.
-- The same codebase is built for every supported Minecraft target from `1.21` through `1.21.11`.
+- Release jars are versioned as `pathmind-neoforge-<modVersion>+mc1.21.1-neoforge.jar`.
+- This NeoForge port targets Minecraft `1.21.1`.
 - Multiple language files are included.
 - Marketplace listings include version compatibility metadata.
 
@@ -151,15 +149,15 @@ Convenience tasks:
 
 ### Supported Build Targets
 
-`1.21`, `1.21.1`, `1.21.2`, `1.21.3`, `1.21.4`, `1.21.5`, `1.21.6`, `1.21.7`, `1.21.8`, `1.21.9`, `1.21.10`, `1.21.11`
+`1.21.1`
 
 ## Version Information
 
 | Component | Version |
 |-----------|---------|
 | Mod Version | `1.1.4` |
-| Supported Minecraft Versions | `1.21 - 1.21.11` |
-| Fabric Loader | `0.17.3+` |
+| Supported Minecraft Versions | `1.21.1` |
+| NeoForge | `21.1+` |
 | Java | `21+` |
 
 ## Release Readiness
@@ -185,5 +183,5 @@ In short:
 
 ## Acknowledgments
 
-- FabricMC for the modding framework
+- NeoForge for the modding framework
 - Blender and Scratch for helping inspire the node-based workflow direction
