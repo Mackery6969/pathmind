@@ -294,6 +294,7 @@ public class Node {
     static final double PARAMETER_SEARCH_RADIUS = 64.0;
     private static final Method CLIENT_WORLD_GET_ENTITY_BY_UUID = resolveClientWorldGetEntityByUuid();
     static final double DEFAULT_REACH_DISTANCE_SQUARED = 25.0D;
+    private static final double DEFAULT_REACH_DISTANCE = Math.sqrt(DEFAULT_REACH_DISTANCE_SQUARED);
     static final double DEFAULT_DIRECTION_DISTANCE = 16.0;
     static final long SNEAK_SYNC_DELAY_MS = 75L;
     private static final Pattern UNSAFE_RESOURCE_ID_PATTERN = Pattern.compile("[^a-z0-9_:/.-]");
@@ -5029,10 +5030,15 @@ public class Node {
         BlockPos.Mutable mutable = new BlockPos.Mutable();
         BlockPos bestPos = null;
         double bestDistance = Double.MAX_VALUE;
+        double maxDistanceSq = range * range;
 
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
+                    double offsetDistanceSq = dx * dx + dy * dy + dz * dz;
+                    if (offsetDistanceSq > maxDistanceSq) {
+                        continue;
+                    }
                     mutable.set(playerPos.getX() + dx, playerPos.getY() + dy, playerPos.getZ() + dz);
                     BlockState state = client.world.getBlockState(mutable);
                     if (state.isAir()) {
@@ -5076,8 +5082,10 @@ public class Node {
         int maxChunkX = Math.floorDiv(playerPos.getX() + radius, 16);
         int minChunkZ = Math.floorDiv(playerPos.getZ() - radius, 16);
         int maxChunkZ = Math.floorDiv(playerPos.getZ() + radius, 16);
-        int minY = client.world.getBottomY();
-        int maxY = minY + client.world.getHeight() - 1;
+        int worldMinY = client.world.getBottomY();
+        int worldMaxY = worldMinY + client.world.getHeight() - 1;
+        int minY = Math.max(worldMinY, playerPos.getY() - radius);
+        int maxY = Math.min(worldMaxY, playerPos.getY() + radius);
         double maxDistanceSq = range * range;
 
         for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
@@ -5092,6 +5100,10 @@ public class Node {
                     for (int localZ = 0; localZ < 16; localZ++) {
                         int worldX = startX + localX;
                         int worldZ = startZ + localZ;
+                        double horizontalDistanceSq = playerPos.getSquaredDistance(worldX, playerPos.getY(), worldZ);
+                        if (horizontalDistanceSq > maxDistanceSq) {
+                            continue;
+                        }
                         for (int y = minY; y <= maxY; y++) {
                             mutable.set(worldX, y, worldZ);
                             if (mutable.getSquaredDistance(playerPos) > maxDistanceSq) {
@@ -5127,10 +5139,15 @@ public class Node {
         BlockPos.Mutable mutable = new BlockPos.Mutable();
         BlockPos bestPos = null;
         double bestDistance = Double.MAX_VALUE;
+        double maxDistanceSq = range * range;
 
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
+                    double offsetDistanceSq = dx * dx + dy * dy + dz * dz;
+                    if (offsetDistanceSq > maxDistanceSq) {
+                        continue;
+                    }
                     mutable.set(playerPos.getX() + dx, playerPos.getY() + dy, playerPos.getZ() + dz);
                     BlockState state = client.world.getBlockState(mutable);
                     if (state.isAir()) {
@@ -5480,6 +5497,26 @@ public class Node {
         return worldActionCommandExecutor().getPlacementReachSquared(client);
     }
 
+    static double getBlockInteractionReach(net.minecraft.client.MinecraftClient client) {
+        if (client == null || client.player == null) {
+            return DEFAULT_REACH_DISTANCE;
+        }
+        return Math.max(0.0D, client.player.getBlockInteractionRange());
+    }
+
+    static double getBlockInteractionReachSquared(net.minecraft.client.MinecraftClient client) {
+        double reach = getBlockInteractionReach(client);
+        return reach * reach;
+    }
+
+    static double getEntityInteractionReachSquared(net.minecraft.client.MinecraftClient client) {
+        double reach = DEFAULT_REACH_DISTANCE;
+        if (client != null && client.player != null) {
+            reach = Math.max(0.0D, client.player.getEntityInteractionRange());
+        }
+        return reach * reach;
+    }
+
     boolean isBlockReplaceable(net.minecraft.world.World world, BlockPos targetPos) {
         return worldActionCommandExecutor().isBlockReplaceable(world, targetPos);
     }
@@ -5622,7 +5659,7 @@ public class Node {
             -Math.sin(pitchRad),
             Math.cos(yawRad) * Math.cos(pitchRad)
         );
-        double reachDistance = Math.sqrt(DEFAULT_REACH_DISTANCE_SQUARED);
+        double reachDistance = getBlockInteractionReach(client);
         double rayDistance = distance > 0.0 ? Math.min(distance, reachDistance) : reachDistance;
         Vec3d end = eyePos.add(direction.multiply(rayDistance));
         HitResult hit = client.world.raycast(new RaycastContext(

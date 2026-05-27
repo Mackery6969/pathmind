@@ -104,7 +104,7 @@ final class NodeTargetSensorEvaluator {
             client,
             client.player.getYaw(),
             client.player.getPitch(),
-            Math.sqrt(Node.DEFAULT_REACH_DISTANCE_SQUARED)
+            Node.getBlockInteractionReach(client)
         );
         if (freshHit != null) {
             return Optional.of(freshHit);

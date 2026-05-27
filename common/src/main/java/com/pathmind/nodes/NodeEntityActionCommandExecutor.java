@@ -45,7 +45,6 @@ import org.lwjgl.glfw.GLFW;
 
 final class NodeEntityActionCommandExecutor {
     private static final Method DO_ATTACK_METHOD = resolveDoAttackMethod();
-    private static final double DEFAULT_BLOCK_INTERACTION_REACH = 4.5D;
     private static final double BREAK_AIM_EPSILON = 0.001D;
 
     private final Node owner;
@@ -171,7 +170,7 @@ final class NodeEntityActionCommandExecutor {
 
         if (targetEntity != null) {
             // Check distance
-            if (targetEntity.squaredDistanceTo(client.player.getEyePos()) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+            if (targetEntity.squaredDistanceTo(client.player.getEyePos()) > Node.getEntityInteractionReachSquared(client)) {
                 restoreSneakState.run();
                 String entityName = configuredEntityId != null
                     ? configuredEntityId.replace("minecraft:", "").replace("_", " ")
@@ -204,7 +203,7 @@ final class NodeEntityActionCommandExecutor {
                 if (selectionSource != null && !selectionSource.isEmpty()) {
                     BlockSelection.parse(selectionSource).ifPresent(selections::add);
                 }
-                Optional<BlockPos> nearest = owner.findNearestBlock(client, selections, Node.PARAMETER_SEARCH_RADIUS);
+                Optional<BlockPos> nearest = owner.findNearestBlock(client, selections, Node.getBlockInteractionReach(client));
                 if (nearest.isPresent()) {
                     targetPos = nearest.get();
                 }
@@ -248,7 +247,7 @@ final class NodeEntityActionCommandExecutor {
 
             Vec3d eyePos = client.player.getEyePos();
             Vec3d hitVec = Vec3d.ofCenter(targetPos);
-            if (eyePos.squaredDistanceTo(hitVec) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+            if (eyePos.squaredDistanceTo(hitVec) > Node.getBlockInteractionReachSquared(client)) {
                 restoreSneakState.run();
                 owner.sendNodeErrorMessage(client, blockDisplayName + " is too far away to interact with.");
                 future.complete(null);
@@ -339,7 +338,7 @@ final class NodeEntityActionCommandExecutor {
                 }
             }
             if (targetPos == null) {
-                Optional<BlockPos> nearest = owner.findNearestBlock(client, selections, Math.sqrt(Node.DEFAULT_REACH_DISTANCE_SQUARED));
+                Optional<BlockPos> nearest = owner.findNearestBlock(client, selections, Node.getBlockInteractionReach(client));
                 if (nearest.isPresent()) {
                     targetPos = nearest.get();
                 }
@@ -438,11 +437,7 @@ final class NodeEntityActionCommandExecutor {
     }
 
     private double getBlockInteractionReachSquared(MinecraftClient client) {
-        double reach = DEFAULT_BLOCK_INTERACTION_REACH;
-        if (client != null && client.player != null) {
-            reach = Math.max(0.0D, client.player.getBlockInteractionRange());
-        }
-        return reach * reach;
+        return Node.getBlockInteractionReachSquared(client);
     }
 
     private List<Direction> preferredBreakFaces(Vec3d eyePos, BlockPos target) {

@@ -267,7 +267,7 @@ final class NodeCollectCommandExecutor {
 
         Vec3d eyePos = client.player.getEyePos();
         Vec3d center = Vec3d.ofCenter(targetPos);
-        if (eyePos.squaredDistanceTo(center) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+        if (eyePos.squaredDistanceTo(center) > Node.getBlockInteractionReachSquared(client)) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.targetBlockOutOfReach"));
             return;
         }

@@ -923,7 +923,7 @@ final class NodeWorldActionCommandExecutor {
     }
 
     double getPlacementReachSquared(net.minecraft.client.MinecraftClient client) {
-        return Node.DEFAULT_REACH_DISTANCE_SQUARED;
+        return Node.getBlockInteractionReachSquared(client);
     }
 
     private String describeBlockState(BlockState state) {

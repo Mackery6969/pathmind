@@ -140,7 +140,7 @@ Imported marketplace presets and exported graphs also flow through this preset s
 ```bash
 git clone https://github.com/soymods/pathmind.git
 cd pathmind
-./gradlew :fabric:remapJar :neoforge:remapJar -Pmc_version=1.21.11
+./gradlew :fabric:remapJar :neoforge:remapJar "-Pmc_version=1.21.11"
 ```
 
 Fabric jars are written to `fabric/build/libs/`, NeoForge jars to `neoforge/build/libs/`.
@@ -152,10 +152,10 @@ Fabric jars are written to `fabric/build/libs/`, NeoForge jars to `neoforge/buil
 ./gradlew runClient
 
 # Fabric dev client
-./gradlew :fabric:runClient -Pmc_version=1.21.11
+./gradlew :fabric:runClient "-Pmc_version=1.21.11"
 
 # NeoForge dev client
-./gradlew :neoforge:runClient -Pmc_version=1.21.11
+./gradlew :neoforge:runClient "-Pmc_version=1.21.11"
 ```
 
 Unqualified run tasks default to Fabric because Fabric is the primary loader. Use the `:neoforge:` project path when you want the NeoForge dev client.
