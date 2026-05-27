@@ -2,37 +2,38 @@ package com.pathmind.nodes;
 
 import static com.pathmind.util.PathmindI18n.tr;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import com.pathmind.util.BlockSelection;
 import com.pathmind.util.HotbarSlotSynchronizer;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import net.minecraft.client.KeyMapping;
-import net.minecraft.client.Minecraft;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
-import net.minecraft.network.protocol.game.ServerboundSwingPacket;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.InteractionResult;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.EntityHitResult;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
 import java.lang.reflect.Method;
 
 import org.lwjgl.glfw.GLFW;
@@ -49,13 +50,13 @@ final class NodeEntityActionCommandExecutor {
         if (owner.preprocessAttachedParameter(EnumSet.of(Node.ParameterUsage.POSITION), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (client == null || client.player == null || client.gameMode == null || client.level == null) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.player == null || client.interactionManager == null || client.world == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
         
-        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
+        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
         boolean preferEntity = owner.getBooleanParameter("PreferEntity", true);
         boolean preferBlock = owner.getBooleanParameter("PreferBlock", true);
         boolean fallbackToItem = owner.getBooleanParameter("FallbackToItemUse", true);
@@ -63,19 +64,19 @@ final class NodeEntityActionCommandExecutor {
         boolean sneakWhileInteracting = owner.getBooleanParameter("SneakWhileInteracting", false);
         boolean restoreSneak = owner.getBooleanParameter("RestoreSneakState", true);
 
-        boolean previousSneak = client.player.isShiftKeyDown();
+        boolean previousSneak = client.player.isSneaking();
         if (sneakWhileInteracting) {
-            client.player.setShiftKeyDown(true);
-            if (client.options != null && client.options.keyShift != null) {
-                client.options.keyShift.setDown(true);
+            client.player.setSneaking(true);
+            if (client.options != null && client.options.sneakKey != null) {
+                client.options.sneakKey.setPressed(true);
             }
         }
 
         Runnable restoreSneakState = () -> {
             if (sneakWhileInteracting && restoreSneak) {
-                client.player.setShiftKeyDown(previousSneak);
-                if (client.options != null && client.options.keyShift != null) {
-                    client.options.keyShift.setDown(previousSneak);
+                client.player.setSneaking(previousSneak);
+                if (client.options != null && client.options.sneakKey != null) {
+                    client.options.sneakKey.setPressed(previousSneak);
                 }
             }
         };
@@ -110,15 +111,15 @@ final class NodeEntityActionCommandExecutor {
         if (configuredBlockId != null && !configuredBlockId.isEmpty()) {
             String sanitized = owner.sanitizeResourceId(configuredBlockId);
             String normalized = owner.normalizeResourceId(sanitized, "minecraft");
-            ResourceLocation identifier = ResourceLocation.tryParse(normalized);
-            if (identifier == null || !BuiltInRegistries.BLOCK.containsKey(identifier)) {
+            Identifier identifier = Identifier.tryParse(normalized);
+            if (identifier == null || !Registries.BLOCK.containsId(identifier)) {
                 restoreSneakState.run();
                 String label = requestedBlockLabel != null && !requestedBlockLabel.isEmpty() ? requestedBlockLabel : configuredBlockId;
                 owner.sendNodeErrorMessage(client, tr("pathmind.error.interactUnknownBlock", label));
                 future.complete(null);
                 return;
             }
-            targetBlock = BuiltInRegistries.BLOCK.getOptional(identifier).orElse(null);
+            targetBlock = Registries.BLOCK.get(identifier);
             configuredBlockId = identifier.toString();
             owner.setParameterValueAndPropagate("Block", configuredBlockId);
         }
@@ -138,16 +139,16 @@ final class NodeEntityActionCommandExecutor {
         if (targetEntity == null && configuredEntityId != null && !configuredEntityId.isEmpty()) {
             String sanitizedEntity = owner.sanitizeResourceId(configuredEntityId);
             String normalizedEntity = owner.normalizeResourceId(sanitizedEntity, "minecraft");
-            ResourceLocation entityIdentifier = ResourceLocation.tryParse(normalizedEntity);
+            Identifier entityIdentifier = Identifier.tryParse(normalizedEntity);
 
-            if (entityIdentifier == null || !BuiltInRegistries.ENTITY_TYPE.containsKey(entityIdentifier)) {
+            if (entityIdentifier == null || !Registries.ENTITY_TYPE.containsId(entityIdentifier)) {
                 restoreSneakState.run();
                 owner.sendNodeErrorMessage(client, tr("pathmind.error.interactUnknownEntity", configuredEntityId));
                 future.complete(null);
                 return;
             }
 
-            EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(entityIdentifier).orElse(null);
+            EntityType<?> entityType = Registries.ENTITY_TYPE.get(entityIdentifier);
             Optional<Entity> nearestEntity = owner.findNearestEntity(client, entityType, Node.PARAMETER_SEARCH_RADIUS);
 
             if (!nearestEntity.isPresent()) {
@@ -163,11 +164,11 @@ final class NodeEntityActionCommandExecutor {
 
         if (targetEntity != null) {
             // Check distance
-            if (targetEntity.distanceToSqr(client.player.getEyePosition()) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+            if (targetEntity.squaredDistanceTo(client.player.getEyePos()) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
                 restoreSneakState.run();
                 String entityName = configuredEntityId != null
                     ? configuredEntityId.replace("minecraft:", "").replace("_", " ")
-                    : String.valueOf(BuiltInRegistries.ENTITY_TYPE.getKey(targetEntity.getType()))
+                    : String.valueOf(Registries.ENTITY_TYPE.getId(targetEntity.getType()))
                         .replace("minecraft:", "")
                         .replace("_", " ");
                 owner.sendNodeErrorMessage(client, tr("pathmind.error.entityTooFarToInteract", entityName));
@@ -176,13 +177,13 @@ final class NodeEntityActionCommandExecutor {
             }
         }
 
-        HitResult target = client.hitResult;
-        InteractionResult result = InteractionResult.PASS;
+        HitResult target = client.crosshairTarget;
+        ActionResult result = ActionResult.PASS;
         boolean attemptedInteraction = false;
 
         // If an entity parameter is specified, interact with it first
         if (targetEntity != null) {
-            result = client.gameMode.interact(client.player, targetEntity, hand);
+            result = client.interactionManager.interactEntity(client.player, targetEntity, hand);
             attemptedInteraction = true;
         }
 
@@ -210,7 +211,7 @@ final class NodeEntityActionCommandExecutor {
                 return;
             }
 
-            BlockState state = client.level.getBlockState(targetPos);
+            BlockState state = client.world.getBlockState(targetPos);
             if (state.isAir()) {
                 String name = targetBlock != null ? targetBlock.getName().getString()
                     : (requestedBlockLabel != null && !requestedBlockLabel.isEmpty() ? requestedBlockLabel : "block");
@@ -222,13 +223,13 @@ final class NodeEntityActionCommandExecutor {
 
             if (targetBlock == null) {
                 targetBlock = state.getBlock();
-                ResourceLocation stateId = BuiltInRegistries.BLOCK.getKey(targetBlock);
+                Identifier stateId = Registries.BLOCK.getId(targetBlock);
                 if (stateId != null) {
                     owner.setParameterValueAndPropagate("Block", stateId.toString());
                 }
             }
 
-            if (targetBlock != null && !state.is(targetBlock)) {
+            if (targetBlock != null && !state.isOf(targetBlock)) {
                 String name = targetBlock.getName().getString();
                 restoreSneakState.run();
                 owner.sendNodeErrorMessage(client, name + " is not nearby for " + owner.getType().getDisplayName() + ".");
@@ -238,40 +239,40 @@ final class NodeEntityActionCommandExecutor {
 
             String blockDisplayName = targetBlock.getName().getString();
 
-            Vec3 eyePos = client.player.getEyePosition();
-            Vec3 hitVec = Vec3.atCenterOf(targetPos);
-            if (eyePos.distanceToSqr(hitVec) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+            Vec3d eyePos = client.player.getEyePos();
+            Vec3d hitVec = Vec3d.ofCenter(targetPos);
+            if (eyePos.squaredDistanceTo(hitVec) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
                 restoreSneakState.run();
                 owner.sendNodeErrorMessage(client, blockDisplayName + " is too far away to interact with.");
                 future.complete(null);
                 return;
             }
 
-            Direction facing = com.pathmind.util.DirectionCompatibilityBridge.nearest(hitVec.x - eyePos.x, hitVec.y - eyePos.y, hitVec.z - eyePos.z);
+            Direction facing = Direction.getFacing(hitVec.x - eyePos.x, hitVec.y - eyePos.y, hitVec.z - eyePos.z);
             BlockHitResult manualHit = new BlockHitResult(hitVec, facing == null ? Direction.UP : facing, targetPos, false);
             target = manualHit;
-            result = client.gameMode.useItemOn(client.player, hand, manualHit);
+            result = client.interactionManager.interactBlock(client.player, hand, manualHit);
             attemptedInteraction = true;
         }
 
         if (!attemptedInteraction && preferEntity && target instanceof EntityHitResult entityHit) {
-            result = client.gameMode.interact(client.player, entityHit.getEntity(), hand);
+            result = client.interactionManager.interactEntity(client.player, entityHit.getEntity(), hand);
             attemptedInteraction = true;
         }
 
-        if ((!attemptedInteraction || !result.consumesAction()) && preferBlock && target instanceof BlockHitResult blockHit) {
-            result = client.gameMode.useItemOn(client.player, hand, blockHit);
+        if ((!attemptedInteraction || !result.isAccepted()) && preferBlock && target instanceof BlockHitResult blockHit) {
+            result = client.interactionManager.interactBlock(client.player, hand, blockHit);
             attemptedInteraction = true;
         }
 
-        if ((!attemptedInteraction || (!result.consumesAction() && result != InteractionResult.PASS)) && fallbackToItem) {
-            result = client.gameMode.useItem(client.player, hand);
+        if ((!attemptedInteraction || (!result.isAccepted() && result != ActionResult.PASS)) && fallbackToItem) {
+            result = client.interactionManager.interactItem(client.player, hand);
         }
 
-        if (swingOnSuccess && (result.consumesAction() || result == InteractionResult.PASS)) {
-            client.player.swing(hand);
-            if (client.player.connection != null) {
-                client.player.connection.send(new ServerboundSwingPacket(hand));
+        if (swingOnSuccess && (result.isAccepted() || result == ActionResult.PASS)) {
+            client.player.swingHand(hand);
+            if (client.player.networkHandler != null) {
+                client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
             }
         }
 
@@ -282,8 +283,8 @@ final class NodeEntityActionCommandExecutor {
         if (owner.preprocessAttachedParameter(EnumSet.of(Node.ParameterUsage.POSITION), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (client == null || client.player == null || client.level == null) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.player == null || client.world == null) {
             NodeExecutionCompletion.completeExceptionally(future, new RuntimeException("Minecraft client not available"));
             return;
         }
@@ -300,8 +301,8 @@ final class NodeEntityActionCommandExecutor {
             if (owner.runtimeState().runtimeParameterData.targetBlockPos != null) {
                 targetPos = owner.runtimeState().runtimeParameterData.targetBlockPos;
             } else if (owner.runtimeState().runtimeParameterData.targetVector != null) {
-                Vec3 vec = owner.runtimeState().runtimeParameterData.targetVector;
-                targetPos = new BlockPos(Mth.floor(vec.x), Mth.floor(vec.y), Mth.floor(vec.z));
+                Vec3d vec = owner.runtimeState().runtimeParameterData.targetVector;
+                targetPos = new BlockPos(MathHelper.floor(vec.x), MathHelper.floor(vec.y), MathHelper.floor(vec.z));
             }
         }
 
@@ -316,7 +317,7 @@ final class NodeEntityActionCommandExecutor {
                 BlockHitResult blockHit = currentHit.get();
                 BlockPos hitPos = blockHit.getBlockPos();
                 if (hitPos != null) {
-                    BlockState hitState = client.level.getBlockState(hitPos);
+                    BlockState hitState = client.world.getBlockState(hitPos);
                     boolean matches = false;
                     for (BlockSelection selection : selections) {
                         if (selection.matches(hitState)) {
@@ -326,7 +327,7 @@ final class NodeEntityActionCommandExecutor {
                     }
                     if (matches) {
                         targetPos = hitPos;
-                        breakFace = blockHit.getDirection();
+                        breakFace = blockHit.getSide();
                     }
                 }
             }
@@ -348,27 +349,27 @@ final class NodeEntityActionCommandExecutor {
         }
         owner.runtimeState().runtimeParameterData.targetBlockPos = targetPos;
 
-        Vec3 eyePos = client.player.getEyePosition();
-        Vec3 center = Vec3.atCenterOf(targetPos);
-        if (eyePos.distanceToSqr(center) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
+        Vec3d eyePos = client.player.getEyePos();
+        Vec3d center = Vec3d.ofCenter(targetPos);
+        if (eyePos.squaredDistanceTo(center) > Node.DEFAULT_REACH_DISTANCE_SQUARED) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.targetBlockOutOfReach"));
             return;
         }
 
         if (breakFace == null) {
-            Vec3 delta = center.subtract(eyePos);
-            breakFace = com.pathmind.util.DirectionCompatibilityBridge.nearest(delta.x, delta.y, delta.z);
+            Vec3d delta = center.subtract(eyePos);
+            breakFace = Direction.getFacing(delta.x, delta.y, delta.z);
             if (breakFace == null) {
                 breakFace = Direction.UP;
             }
         }
 
-        BlockState state = client.level.getBlockState(targetPos);
+        BlockState state = client.world.getBlockState(targetPos);
         if (state.isAir()) {
             NodeExecutionCompletion.complete(future);
             return;
         }
-        float delta = state.getDestroyProgress(client.player, client.level, targetPos);
+        float delta = state.calcBlockBreakingDelta(client.player, client.world, targetPos);
         if (delta <= 0.0F) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.blockCannotBeBroken"));
             return;
@@ -381,30 +382,30 @@ final class NodeEntityActionCommandExecutor {
             try {
                 owner.runOnClientThread(client, () -> {
                     owner.orientPlayerTowardsRuntimeTarget(client, owner.runtimeState().runtimeParameterData);
-                    if (client.gameMode != null) {
-                        client.gameMode.startDestroyBlock(finalTargetPos, finalBreakFace);
+                    if (client.interactionManager != null) {
+                        client.interactionManager.attackBlock(finalTargetPos, finalBreakFace);
                     }
-                    client.player.swing(InteractionHand.MAIN_HAND);
+                    client.player.swingHand(Hand.MAIN_HAND);
                 });
 
                 for (int i = 0; i < ticksToBreak; i++) {
                     Thread.sleep(50L);
                     Boolean isAir = owner.supplyFromClient(client,
-                        () -> client.level == null || client.level.getBlockState(finalTargetPos).isAir());
+                        () -> client.world == null || client.world.getBlockState(finalTargetPos).isAir());
                     if (Boolean.TRUE.equals(isAir)) {
                         break;
                     }
                     owner.runOnClientThread(client, () -> {
-                        if (client.gameMode != null) {
-                            client.gameMode.continueDestroyBlock(finalTargetPos, finalBreakFace);
+                        if (client.interactionManager != null) {
+                            client.interactionManager.updateBlockBreakingProgress(finalTargetPos, finalBreakFace);
                         }
                     });
                 }
 
                 owner.runOnClientThread(client, () -> {
-                    if (client.player != null && client.player.connection != null) {
-                        client.player.connection.send(new ServerboundPlayerActionPacket(
-                            ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK,
+                    if (client.player != null && client.player.networkHandler != null) {
+                        client.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                            PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK,
                             finalTargetPos,
                             finalBreakFace
                         ));
@@ -423,31 +424,31 @@ final class NodeEntityActionCommandExecutor {
         }
         owner.ensureVillagerTradeNumberParameter();
 
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (client == null || client.player == null || client.gameMode == null) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.player == null || client.interactionManager == null) {
             NodeExecutionCompletion.completeExceptionally(future, new RuntimeException("Minecraft client not available"));
             return;
         }
 
         // Check if a merchant screen is open
-        net.minecraft.client.gui.screens.Screen currentScreen = client.screen;
-        if (!(currentScreen instanceof net.minecraft.client.gui.screens.inventory.MerchantScreen)) {
+        net.minecraft.client.gui.screen.Screen currentScreen = client.currentScreen;
+        if (!(currentScreen instanceof net.minecraft.client.gui.screen.ingame.MerchantScreen)) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.noVillagerTradingScreen"));
             return;
         }
 
-        net.minecraft.client.gui.screens.inventory.MerchantScreen merchantScreen =
-            (net.minecraft.client.gui.screens.inventory.MerchantScreen) currentScreen;
+        net.minecraft.client.gui.screen.ingame.MerchantScreen merchantScreen =
+            (net.minecraft.client.gui.screen.ingame.MerchantScreen) currentScreen;
 
         // Get the screen handler from merchant screen
-        net.minecraft.world.inventory.MerchantMenu screenHandler = merchantScreen.getMenu();
+        net.minecraft.screen.MerchantScreenHandler screenHandler = merchantScreen.getScreenHandler();
         if (screenHandler == null) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.merchantScreenHandlerUnavailable"));
             return;
         }
 
         // Get the trade offers
-        net.minecraft.world.item.trading.MerchantOffers tradeOffers = screenHandler.getOffers();
+        net.minecraft.village.TradeOfferList tradeOffers = screenHandler.getRecipes();
         if (tradeOffers == null || tradeOffers.isEmpty()) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.noVillagerTrades"));
             return;
@@ -459,8 +460,8 @@ final class NodeEntityActionCommandExecutor {
                 "Trade #" + selectedTradeNumber + " is not available.");
             return;
         }
-        net.minecraft.world.item.trading.MerchantOffer selectedOffer = tradeOffers.get(tradeIndex);
-        if (selectedOffer.isOutOfStock()) {
+        net.minecraft.village.TradeOffer selectedOffer = tradeOffers.get(tradeIndex);
+        if (selectedOffer.isDisabled()) {
             NodeExecutionCompletion.fail(owner, client, future,
                 "Trade #" + selectedTradeNumber + " is out of stock.");
             return;
@@ -484,11 +485,11 @@ final class NodeEntityActionCommandExecutor {
                         if (preferredTradeIndex == null || preferredTradeIndex < 0 || preferredTradeIndex >= tradeOffers.size()) {
                             continue;
                         }
-                        net.minecraft.world.item.trading.MerchantOffer offer = tradeOffers.get(preferredTradeIndex);
+                        net.minecraft.village.TradeOffer offer = tradeOffers.get(preferredTradeIndex);
                         if (offer == null) {
                             continue;
                         }
-                        if (!offer.isOutOfStock()) {
+                        if (!offer.isDisabled()) {
                             anyMatchStillAvailable = true;
                         }
                         int executableTrades = getMaxExecutableTradeCount(client.player, screenHandler, offer);
@@ -502,7 +503,7 @@ final class NodeEntityActionCommandExecutor {
 
                         int completedInBatch = 0;
                         for (int i = 0; i < batchSize; i++) {
-                            if (offer.isOutOfStock() || !canAffordTrade(client.player, screenHandler, offer)) {
+                            if (offer.isDisabled() || !canAffordTrade(client.player, screenHandler, offer)) {
                                 break;
                             }
                             if (!quickMoveMerchantTradeResult(client, screenHandler)) {
@@ -543,41 +544,41 @@ final class NodeEntityActionCommandExecutor {
         }, "Pathmind-Trade").start();
     }
 
-    private void selectMerchantTrade(net.minecraft.client.Minecraft client,
-                                     net.minecraft.world.inventory.MerchantMenu screenHandler,
+    private void selectMerchantTrade(net.minecraft.client.MinecraftClient client,
+                                     net.minecraft.screen.MerchantScreenHandler screenHandler,
                                      int tradeIndex) throws InterruptedException {
         owner.runOnClientThread(client, () -> {
-            screenHandler.setSelectionHint(tradeIndex);
-            screenHandler.tryMoveItems(tradeIndex);
-            if (client.player != null && client.player.connection != null) {
-                client.player.connection.send(
-                    new net.minecraft.network.protocol.game.ServerboundSelectTradePacket(tradeIndex)
+            screenHandler.setRecipeIndex(tradeIndex);
+            screenHandler.switchTo(tradeIndex);
+            if (client.player != null && client.player.networkHandler != null) {
+                client.player.networkHandler.sendPacket(
+                    new net.minecraft.network.packet.c2s.play.SelectMerchantTradeC2SPacket(tradeIndex)
                 );
             }
         });
     }
 
-    private boolean quickMoveMerchantTradeResult(net.minecraft.client.Minecraft client,
-                                                 net.minecraft.world.inventory.MerchantMenu screenHandler) throws InterruptedException {
-        if (client == null || client.player == null || client.gameMode == null || screenHandler == null) {
+    private boolean quickMoveMerchantTradeResult(net.minecraft.client.MinecraftClient client,
+                                                 net.minecraft.screen.MerchantScreenHandler screenHandler) throws InterruptedException {
+        if (client == null || client.player == null || client.interactionManager == null || screenHandler == null) {
             return false;
         }
         final boolean[] moved = {false};
         owner.runOnClientThread(client, () -> {
             final int outputSlot = 2;
-            net.minecraft.world.inventory.Slot output = screenHandler.getSlot(outputSlot);
+            net.minecraft.screen.slot.Slot output = screenHandler.getSlot(outputSlot);
             if (output == null) {
                 return;
             }
-            net.minecraft.world.item.ItemStack outputStack = output.getItem();
+            net.minecraft.item.ItemStack outputStack = output.getStack();
             if (outputStack == null || outputStack.isEmpty()) {
                 return;
             }
-            client.gameMode.handleInventoryMouseClick(
-                screenHandler.containerId,
+            client.interactionManager.clickSlot(
+                screenHandler.syncId,
                 outputSlot,
                 0,
-                net.minecraft.world.inventory.ClickType.QUICK_MOVE,
+                net.minecraft.screen.slot.SlotActionType.QUICK_MOVE,
                 client.player
             );
             moved[0] = true;
@@ -585,22 +586,22 @@ final class NodeEntityActionCommandExecutor {
         return moved[0];
     }
 
-    private int getMaxExecutableTradeCount(net.minecraft.world.entity.player.Player player,
-                                           net.minecraft.world.inventory.MerchantMenu screenHandler,
-                                           net.minecraft.world.item.trading.MerchantOffer offer) {
-        if (player == null || screenHandler == null || offer == null || offer.isOutOfStock()) {
+    private int getMaxExecutableTradeCount(net.minecraft.entity.player.PlayerEntity player,
+                                           net.minecraft.screen.MerchantScreenHandler screenHandler,
+                                           net.minecraft.village.TradeOffer offer) {
+        if (player == null || screenHandler == null || offer == null || offer.isDisabled()) {
             return 0;
         }
 
         int maxTrades = Integer.MAX_VALUE;
-        net.minecraft.world.item.ItemStack firstBuyItem = getRequiredFirstBuyItem(offer);
+        net.minecraft.item.ItemStack firstBuyItem = getRequiredFirstBuyItem(offer);
         if (!firstBuyItem.isEmpty()) {
             int required = Math.max(1, firstBuyItem.getCount());
             int available = countAvailableForTrade(player.getInventory(), screenHandler, firstBuyItem);
             maxTrades = Math.min(maxTrades, available / required);
         }
 
-        net.minecraft.world.item.ItemStack secondBuyItem = getRequiredSecondBuyItem(offer);
+        net.minecraft.item.ItemStack secondBuyItem = getRequiredSecondBuyItem(offer);
         if (!secondBuyItem.isEmpty()) {
             int required = Math.max(1, secondBuyItem.getCount());
             int available = countAvailableForTrade(player.getInventory(), screenHandler, secondBuyItem);
@@ -611,16 +612,16 @@ final class NodeEntityActionCommandExecutor {
         return maxTrades == Integer.MAX_VALUE ? 0 : Math.max(0, maxTrades);
     }
 
-    boolean canAffordTrade(net.minecraft.world.entity.player.Player player,
-                           net.minecraft.world.inventory.MerchantMenu screenHandler,
-                           net.minecraft.world.item.trading.MerchantOffer offer) {
+    boolean canAffordTrade(net.minecraft.entity.player.PlayerEntity player,
+                           net.minecraft.screen.MerchantScreenHandler screenHandler,
+                           net.minecraft.village.TradeOffer offer) {
         if (player == null || offer == null || screenHandler == null) {
             return false;
         }
 
-        net.minecraft.world.entity.player.Inventory inventory = player.getInventory();
+        net.minecraft.entity.player.PlayerInventory inventory = player.getInventory();
 
-        net.minecraft.world.item.ItemStack firstBuyItem = getRequiredFirstBuyItem(offer);
+        net.minecraft.item.ItemStack firstBuyItem = getRequiredFirstBuyItem(offer);
         if (!firstBuyItem.isEmpty()) {
             int required = firstBuyItem.getCount();
             int available = countAvailableForTrade(inventory, screenHandler, firstBuyItem);
@@ -629,7 +630,7 @@ final class NodeEntityActionCommandExecutor {
             }
         }
 
-        net.minecraft.world.item.ItemStack secondBuyItem = getRequiredSecondBuyItem(offer);
+        net.minecraft.item.ItemStack secondBuyItem = getRequiredSecondBuyItem(offer);
         if (!secondBuyItem.isEmpty()) {
             int required = secondBuyItem.getCount();
             int available = countAvailableForTrade(inventory, screenHandler, secondBuyItem);
@@ -641,29 +642,29 @@ final class NodeEntityActionCommandExecutor {
         return true;
     }
 
-    private static net.minecraft.world.item.ItemStack getRequiredFirstBuyItem(net.minecraft.world.item.trading.MerchantOffer offer) {
-        return offer == null ? net.minecraft.world.item.ItemStack.EMPTY : offer.getCostA();
+    private static net.minecraft.item.ItemStack getRequiredFirstBuyItem(net.minecraft.village.TradeOffer offer) {
+        return offer == null ? net.minecraft.item.ItemStack.EMPTY : offer.getDisplayedFirstBuyItem();
     }
 
-    private static net.minecraft.world.item.ItemStack getRequiredSecondBuyItem(net.minecraft.world.item.trading.MerchantOffer offer) {
-        return offer == null ? net.minecraft.world.item.ItemStack.EMPTY : offer.getCostB();
+    private static net.minecraft.item.ItemStack getRequiredSecondBuyItem(net.minecraft.village.TradeOffer offer) {
+        return offer == null ? net.minecraft.item.ItemStack.EMPTY : offer.getDisplayedSecondBuyItem();
     }
 
-    static int getRequiredFirstBuyCountForTests(net.minecraft.world.item.trading.MerchantOffer offer) {
+    static int getRequiredFirstBuyCountForTests(net.minecraft.village.TradeOffer offer) {
         if (offer == null) {
             return 0;
         }
         return resolveRequiredTradeCount(
             getRequiredFirstBuyItem(offer).getCount(),
-            offer.getItemCostA().itemStack().getCount()
+            offer.getFirstBuyItem().itemStack().getCount()
         );
     }
 
-    static int getRequiredSecondBuyCountForTests(net.minecraft.world.item.trading.MerchantOffer offer) {
+    static int getRequiredSecondBuyCountForTests(net.minecraft.village.TradeOffer offer) {
         if (offer == null) {
             return 0;
         }
-        java.util.Optional<net.minecraft.world.item.trading.ItemCost> secondBuyItem = offer.getItemCostB();
+        java.util.Optional<net.minecraft.village.TradedItem> secondBuyItem = offer.getSecondBuyItem();
         int originalCount = secondBuyItem.map(item -> item.itemStack().getCount()).orElse(0);
         return resolveRequiredTradeCount(getRequiredSecondBuyItem(offer).getCount(), originalCount);
     }
@@ -676,27 +677,27 @@ final class NodeEntityActionCommandExecutor {
         return displayedCount > 0 ? displayedCount : Math.max(0, originalCount);
     }
 
-    private int countAvailableForTrade(net.minecraft.world.entity.player.Inventory inventory,
-                                       net.minecraft.world.inventory.MerchantMenu screenHandler,
-                                       net.minecraft.world.item.ItemStack requiredStack) {
+    private int countAvailableForTrade(net.minecraft.entity.player.PlayerInventory inventory,
+                                       net.minecraft.screen.MerchantScreenHandler screenHandler,
+                                       net.minecraft.item.ItemStack requiredStack) {
         int available = 0;
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            net.minecraft.world.item.ItemStack stack = inventory.getItem(i);
-            if (net.minecraft.world.item.ItemStack.isSameItem(stack, requiredStack)) {
+        for (int i = 0; i < inventory.size(); i++) {
+            net.minecraft.item.ItemStack stack = inventory.getStack(i);
+            if (net.minecraft.item.ItemStack.areItemsEqual(stack, requiredStack)) {
                 available += stack.getCount();
             }
         }
 
         // Include items already moved into merchant input slots (0 and 1).
         for (int slotIndex = 0; slotIndex <= 1; slotIndex++) {
-            net.minecraft.world.item.ItemStack stack = screenHandler.getSlot(slotIndex).getItem();
-            if (net.minecraft.world.item.ItemStack.isSameItem(stack, requiredStack)) {
+            net.minecraft.item.ItemStack stack = screenHandler.getSlot(slotIndex).getStack();
+            if (net.minecraft.item.ItemStack.areItemsEqual(stack, requiredStack)) {
                 available += stack.getCount();
             }
         }
 
-        net.minecraft.world.item.ItemStack cursorStack = screenHandler.getCarried();
-        if (net.minecraft.world.item.ItemStack.isSameItem(cursorStack, requiredStack)) {
+        net.minecraft.item.ItemStack cursorStack = screenHandler.getCursorStack();
+        if (net.minecraft.item.ItemStack.areItemsEqual(cursorStack, requiredStack)) {
             available += cursorStack.getCount();
         }
 
@@ -706,13 +707,13 @@ final class NodeEntityActionCommandExecutor {
         if (owner.preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
 
-        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
+        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
         boolean holdDurationEnabled = owner.isAmountInputEnabled();
         double durationSeconds = holdDurationEnabled
             ? Math.max(0.0, owner.getDoubleParameter("Duration", 0.0))
@@ -724,14 +725,14 @@ final class NodeEntityActionCommandExecutor {
             boolean releaseAttackKey = false;
             try {
                 if (holdDurationEnabled && durationSeconds > 0.0) {
-                    if (hand == InteractionHand.MAIN_HAND) {
+                    if (hand == Hand.MAIN_HAND) {
                         long durationMs = (long) Math.ceil(durationSeconds * 1000.0);
                         long deadline = System.currentTimeMillis() + durationMs;
                         owner.runOnClientThread(client, () -> {
                             syncSelectedHotbarSlot(client);
                             performMainHandAttack(client);
-                            if (client.options != null && client.options.keyAttack != null) {
-                                client.options.keyAttack.setDown(true);
+                            if (client.options != null && client.options.attackKey != null) {
+                                client.options.attackKey.setPressed(true);
                             }
                         });
                         releaseAttackKey = true;
@@ -748,9 +749,9 @@ final class NodeEntityActionCommandExecutor {
                         boolean swung = false;
                         while (!swung || System.currentTimeMillis() < deadline) {
                             owner.runOnClientThread(client, () -> {
-                                client.player.swing(hand);
-                                if (client.player.connection != null) {
-                                    client.player.connection.send(new ServerboundSwingPacket(hand));
+                                client.player.swingHand(hand);
+                                if (client.player.networkHandler != null) {
+                                    client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
                                 }
                             });
                             swung = true;
@@ -767,13 +768,13 @@ final class NodeEntityActionCommandExecutor {
                 } else {
                     for (int i = 0; i < legacyCount; i++) {
                         owner.runOnClientThread(client, () -> {
-                            if (hand == InteractionHand.MAIN_HAND) {
+                            if (hand == Hand.MAIN_HAND) {
                                 syncSelectedHotbarSlot(client);
                                 performMainHandAttack(client);
                             } else {
-                                client.player.swing(hand);
-                                if (client.player.connection != null) {
-                                    client.player.connection.send(new ServerboundSwingPacket(hand));
+                                client.player.swingHand(hand);
+                                if (client.player.networkHandler != null) {
+                                    client.player.networkHandler.sendPacket(new HandSwingC2SPacket(hand));
                                 }
                             }
                         });
@@ -791,8 +792,8 @@ final class NodeEntityActionCommandExecutor {
                 if (releaseAttackKey) {
                     try {
                         owner.runOnClientThread(client, () -> {
-                            if (client.options != null && client.options.keyAttack != null) {
-                                client.options.keyAttack.setDown(false);
+                            if (client.options != null && client.options.attackKey != null) {
+                                client.options.attackKey.setPressed(false);
                             }
                         });
                     } catch (InterruptedException e) {
@@ -805,22 +806,22 @@ final class NodeEntityActionCommandExecutor {
 
     static Method resolveDoAttackMethod() {
         try {
-            return net.minecraft.client.Minecraft.class.getMethod("doAttack");
+            return net.minecraft.client.MinecraftClient.class.getMethod("doAttack");
         } catch (ReflectiveOperationException ignored) {
             return null;
         }
     }
 
-    static void syncSelectedHotbarSlot(Minecraft client) {
+    static void syncSelectedHotbarSlot(MinecraftClient client) {
         HotbarSlotSynchronizer.syncSelectedHotbarSlot(client);
     }
 
-    static void performMainHandAttack(Minecraft client) {
+    static void performMainHandAttack(MinecraftClient client) {
         if (client == null || client.player == null) {
             return;
         }
-        InputConstants.Key attackKey = InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_LEFT);
-        KeyMapping.click(attackKey);
+        InputUtil.Key attackKey = InputUtil.Type.MOUSE.createFromCode(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+        KeyBinding.onKeyPressed(attackKey);
         try {
             if (DO_ATTACK_METHOD != null) {
                 DO_ATTACK_METHOD.invoke(client);
@@ -829,43 +830,43 @@ final class NodeEntityActionCommandExecutor {
         } catch (ReflectiveOperationException ignored) {
             // Fall back to the direct attack logic below.
         }
-        if (client.gameMode != null) {
-            HitResult target = client.hitResult;
+        if (client.interactionManager != null) {
+            HitResult target = client.crosshairTarget;
             if (target instanceof EntityHitResult entityHit) {
-                client.gameMode.attack(client.player, entityHit.getEntity());
+                client.interactionManager.attackEntity(client.player, entityHit.getEntity());
                 return;
             }
         }
-        client.player.swing(InteractionHand.MAIN_HAND);
-        if (client.player.connection != null) {
-            client.player.connection.send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+        client.player.swingHand(Hand.MAIN_HAND);
+        if (client.player.networkHandler != null) {
+            client.player.networkHandler.sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
         }
     }
     void executeEquipArmorCommand(CompletableFuture<Void> future) {
         if (owner.preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
         
-        Inventory inventory = client.player.getInventory();
+        PlayerInventory inventory = client.player.getInventory();
         int sourceSlot = owner.clampInventorySlot(inventory, owner.getIntParameter("SourceSlot", 0));
         EquipmentSlot equipmentSlot = parseEquipmentSlot(owner.getParameter("ArmorSlot"), EquipmentSlot.HEAD);
         
-        ItemStack sourceStack = inventory.getItem(sourceSlot);
+        ItemStack sourceStack = inventory.getStack(sourceSlot);
         if (sourceStack.isEmpty()) {
             future.complete(null);
             return;
         }
         
-        ItemStack current = client.player.getItemBySlot(equipmentSlot);
-        inventory.setItem(sourceSlot, current);
-        client.player.setItemSlot(equipmentSlot, sourceStack);
-        inventory.setChanged();
-        client.player.inventoryMenu.broadcastChanges();
+        ItemStack current = client.player.getEquippedStack(equipmentSlot);
+        inventory.setStack(sourceSlot, current);
+        client.player.equipStack(equipmentSlot, sourceStack);
+        inventory.markDirty();
+        client.player.playerScreenHandler.sendContentUpdates();
         future.complete(null);
     }
     
@@ -873,27 +874,27 @@ final class NodeEntityActionCommandExecutor {
         if (owner.preprocessAttachedParameter(EnumSet.noneOf(Node.ParameterUsage.class), future) == Node.ParameterHandlingResult.COMPLETE) {
             return;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client == null || client.player == null) {
             future.completeExceptionally(new RuntimeException("Minecraft client not available"));
             return;
         }
         
-        Inventory inventory = client.player.getInventory();
+        PlayerInventory inventory = client.player.getInventory();
         int sourceSlot = owner.clampInventorySlot(inventory, owner.getIntParameter("SourceSlot", 0));
-        InteractionHand hand = owner.resolveHand(owner.getParameter("Hand"), InteractionHand.MAIN_HAND);
+        Hand hand = owner.resolveHand(owner.getParameter("Hand"), Hand.MAIN_HAND);
         
-        ItemStack sourceStack = inventory.getItem(sourceSlot);
+        ItemStack sourceStack = inventory.getStack(sourceSlot);
         if (sourceStack.isEmpty()) {
             future.complete(null);
             return;
         }
         
-        ItemStack handStack = client.player.getItemInHand(hand);
-        client.player.setItemInHand(hand, sourceStack);
-        inventory.setItem(sourceSlot, handStack);
-        inventory.setChanged();
-        client.player.inventoryMenu.broadcastChanges();
+        ItemStack handStack = client.player.getStackInHand(hand);
+        client.player.setStackInHand(hand, sourceStack);
+        inventory.setStack(sourceSlot, handStack);
+        inventory.markDirty();
+        client.player.playerScreenHandler.sendContentUpdates();
         future.complete(null);
     }
 

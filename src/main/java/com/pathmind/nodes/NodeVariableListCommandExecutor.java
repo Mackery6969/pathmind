@@ -8,6 +8,21 @@ import com.pathmind.util.EntityStateOptions;
 import com.pathmind.util.GameProfileCompatibilityBridge;
 import com.pathmind.util.GuiSelectionMode;
 import com.pathmind.util.InventorySlotModeHelper;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.registry.Registries;
+import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.slot.Slot;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -16,20 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import net.minecraft.client.player.AbstractClientPlayer;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.Slot;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
 
 final class NodeVariableListCommandExecutor {
     private final Node owner;
@@ -42,7 +43,7 @@ final class NodeVariableListCommandExecutor {
         Node slot1 = owner.getAttachedParameter(1);
         Node variableNode = slot0;
         Node valueNode = slot1;
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (variableNode == null || variableNode.getType() != NodeType.VARIABLE
             || valueNode == null || valueNode.getType() == NodeType.VARIABLE) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.setVariableRequiresInputs"));
@@ -76,7 +77,7 @@ final class NodeVariableListCommandExecutor {
                     tr("pathmind.error.positionOfRequiresParameter"));
                 return;
             }
-            Optional<Vec3> resolved = valueNode.resolvePositionTarget(parameterNode, null, null);
+            Optional<Vec3d> resolved = valueNode.resolvePositionTarget(parameterNode, null, null);
             if (resolved.isEmpty()) {
                 owner.setNextOutputSocket(Node.NO_OUTPUT);
                 NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.positionOfTargetUnresolved"));
@@ -108,15 +109,15 @@ final class NodeVariableListCommandExecutor {
                     tr("pathmind.error.distanceBetweenInvalidParameters"));
                 return;
             }
-            Optional<Vec3> resolvedA = valueNode.resolveDistanceBetweenTarget(parameterNodeA);
-            Optional<Vec3> resolvedB = valueNode.resolveDistanceBetweenTarget(parameterNodeB);
+            Optional<Vec3d> resolvedA = valueNode.resolveDistanceBetweenTarget(parameterNodeA);
+            Optional<Vec3d> resolvedB = valueNode.resolveDistanceBetweenTarget(parameterNodeB);
             if (resolvedA.isEmpty() || resolvedB.isEmpty()) {
                 owner.setNextOutputSocket(Node.NO_OUTPUT);
                 NodeExecutionCompletion.fail(owner, client, future,
                     tr("pathmind.error.distanceBetweenTargetsUnresolved"));
                 return;
             }
-            double distance = Math.sqrt(resolvedA.get().distanceToSqr(resolvedB.get()));
+            double distance = Math.sqrt(resolvedA.get().squaredDistanceTo(resolvedB.get()));
             values = new HashMap<>();
             values.put("Distance", Double.toString(distance));
             valueType = NodeType.PARAM_DISTANCE;
@@ -138,7 +139,7 @@ final class NodeVariableListCommandExecutor {
     void executeChangeVariableCommand(CompletableFuture<Void> future) {
         Node variableNode = owner.getAttachedParameter(0);
 
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (variableNode == null) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.changeVariableRequiresVariable"));
             return;
@@ -207,7 +208,7 @@ final class NodeVariableListCommandExecutor {
 
     void executeAddToListCommand(CompletableFuture<Void> future) {
         Node parameterNode = owner.getAttachedParameter(0);
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (parameterNode == null) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.addToListRequiresParameter"));
             return;
@@ -256,7 +257,7 @@ final class NodeVariableListCommandExecutor {
     }
 
     void executeRemoveFromListCommand(CompletableFuture<Void> future, RemoveListMode mode) {
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         String listName = owner.getStringParameter("List", "");
         if (listName == null || listName.trim().isEmpty()) {
             NodeExecutionCompletion.fail(owner, client, future, tr("pathmind.error.listNameEmpty"));
@@ -325,7 +326,7 @@ final class NodeVariableListCommandExecutor {
 
     void executeCreateListCommand(CompletableFuture<Void> future) {
         Node parameterNode = owner.getAttachedParameter(0);
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (parameterNode == null) {
             NodeExecutionCompletion.fail(owner, client, future,
                 tr("pathmind.error.createListRequiresParameter"));
@@ -349,7 +350,7 @@ final class NodeVariableListCommandExecutor {
             return;
         }
 
-        if (client == null || client.player == null || client.level == null) {
+        if (client == null || client.player == null || client.world == null) {
             NodeExecutionCompletion.complete(future);
             return;
         }
@@ -444,11 +445,11 @@ final class NodeVariableListCommandExecutor {
                 }
 
                 for (String candidateId : entityIds) {
-                    ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
-                    if (identifier == null || !BuiltInRegistries.ENTITY_TYPE.containsKey(identifier)) {
+                    Identifier identifier = Identifier.tryParse(candidateId);
+                    if (identifier == null || !Registries.ENTITY_TYPE.containsId(identifier)) {
                         continue;
                     }
-                    EntityType<?> entityType = BuiltInRegistries.ENTITY_TYPE.getOptional(identifier).orElse(null);
+                    EntityType<?> entityType = Registries.ENTITY_TYPE.get(identifier);
                     matches.addAll(useCustomRadius
                         ? findEntitiesByTypeWithinRange(client, entityType, searchRadius, state)
                         : findRenderedEntitiesByType(client, entityType, state));
@@ -456,17 +457,17 @@ final class NodeVariableListCommandExecutor {
             }
         } else if (parameterType == NodeType.PARAM_PLAYER) {
             String playerName = Node.getParameterString(parameterNode, "Player");
-            List<AbstractClientPlayer> nearbyPlayers = useCustomRadius
+            List<AbstractClientPlayerEntity> nearbyPlayers = useCustomRadius
                 ? findPlayersWithinRange(client, searchRadius)
-                : client.level.players();
+                : client.world.getPlayers();
             if (Node.isAnyPlayerValue(playerName)) {
                 matches.addAll(nearbyPlayers);
             } else if (Node.isSelfPlayerValue(playerName)) {
-                if (!useCustomRadius || client.player.distanceToSqr(client.player) <= searchRadius * searchRadius) {
+                if (!useCustomRadius || client.player.squaredDistanceTo(client.player) <= searchRadius * searchRadius) {
                     matches.add(client.player);
                 }
             } else {
-                for (AbstractClientPlayer player : nearbyPlayers) {
+                for (AbstractClientPlayerEntity player : nearbyPlayers) {
                     if (player == null) {
                         continue;
                     }
@@ -498,17 +499,17 @@ final class NodeVariableListCommandExecutor {
             }
 
             for (String candidateId : itemIds) {
-                ResourceLocation identifier = ResourceLocation.tryParse(candidateId);
-                if (identifier == null || !BuiltInRegistries.ITEM.containsKey(identifier)) {
+                Identifier identifier = Identifier.tryParse(candidateId);
+                if (identifier == null || !Registries.ITEM.containsId(identifier)) {
                     continue;
                 }
-                Item item = BuiltInRegistries.ITEM.getOptional(identifier).orElse(null);
+                Item item = Registries.ITEM.get(identifier);
                 matches.addAll(useCustomRadius
                     ? findItemsWithinRange(client, item, searchRadius)
                     : findRenderedItemsByType(client, item));
             }
         } else if (parameterType == NodeType.PARAM_GUI) {
-            AbstractContainerMenu handler = client.player.containerMenu;
+            ScreenHandler handler = client.player.currentScreenHandler;
             if (handler == null) {
                 NodeExecutionCompletion.fail(owner, client, future,
                     tr("pathmind.error.noGuiOpenForNode", owner.getType().getDisplayName()));
@@ -559,11 +560,11 @@ final class NodeVariableListCommandExecutor {
             return;
         }
 
-        matches.sort(Comparator.comparingDouble(entity -> entity.distanceToSqr(client.player)));
+        matches.sort(Comparator.comparingDouble(entity -> entity.squaredDistanceTo(client.player)));
         List<String> entries = new ArrayList<>();
         for (Entity entity : matches) {
             if (entity != null && !entity.isRemoved()) {
-                entries.add(entity.getStringUUID());
+                entries.add(entity.getUuidAsString());
             }
         }
 
@@ -595,7 +596,7 @@ final class NodeVariableListCommandExecutor {
             || parameterType == NodeType.PARAM_GUI;
     }
 
-    private List<String> collectGuiListEntries(AbstractContainerMenu handler, GuiSelectionMode guiMode) {
+    private List<String> collectGuiListEntries(ScreenHandler handler, GuiSelectionMode guiMode) {
         if (handler == null) {
             return Collections.emptyList();
         }
@@ -605,26 +606,26 @@ final class NodeVariableListCommandExecutor {
             if (slot == null) {
                 continue;
             }
-            boolean playerSlot = slot.container instanceof Inventory;
+            boolean playerSlot = slot.inventory instanceof PlayerInventory;
             if (guiMode == GuiSelectionMode.PLAYER_INVENTORY && !playerSlot) {
                 continue;
             }
             if (guiMode != null && guiMode != GuiSelectionMode.PLAYER_INVENTORY && playerSlot) {
                 continue;
             }
-            int storedSlotIndex = playerSlot ? slot.getContainerSlot() : slotIndex;
+            int storedSlotIndex = playerSlot ? slot.getIndex() : slotIndex;
             entries.add((playerSlot ? Node.LIST_SLOT_PLAYER_PREFIX : Node.LIST_SLOT_GUI_PREFIX) + storedSlotIndex);
         }
         return entries;
     }
 
-    private List<Entity> findRenderedEntities(net.minecraft.client.Minecraft client, String state) {
-        if (client == null || client.player == null || client.level == null) {
+    private List<Entity> findRenderedEntities(net.minecraft.client.MinecraftClient client, String state) {
+        if (client == null || client.player == null || client.world == null) {
             return Collections.emptyList();
         }
         double renderDistance = getCurrentRenderDistanceBlocks(client);
-        AABB searchBox = client.player.getBoundingBox().inflate(renderDistance);
-        return client.level.getEntities(
+        Box searchBox = client.player.getBoundingBox().expand(renderDistance);
+        return client.world.getOtherEntities(
             client.player,
             searchBox,
             entity -> entity != null
@@ -633,13 +634,13 @@ final class NodeVariableListCommandExecutor {
         );
     }
 
-    private List<Entity> findEntitiesWithinRange(net.minecraft.client.Minecraft client, double range, String state) {
-        if (client == null || client.player == null || client.level == null) {
+    private List<Entity> findEntitiesWithinRange(net.minecraft.client.MinecraftClient client, double range, String state) {
+        if (client == null || client.player == null || client.world == null) {
             return Collections.emptyList();
         }
         double searchRadius = Math.max(1.0, range);
-        AABB searchBox = client.player.getBoundingBox().inflate(searchRadius);
-        return client.level.getEntities(
+        Box searchBox = client.player.getBoundingBox().expand(searchRadius);
+        return client.world.getOtherEntities(
             client.player,
             searchBox,
             entity -> entity != null
@@ -648,13 +649,13 @@ final class NodeVariableListCommandExecutor {
         );
     }
 
-    private List<Entity> findRenderedEntitiesByType(net.minecraft.client.Minecraft client, EntityType<?> entityType, String state) {
-        if (client == null || client.player == null || client.level == null || entityType == null) {
+    private List<Entity> findRenderedEntitiesByType(net.minecraft.client.MinecraftClient client, EntityType<?> entityType, String state) {
+        if (client == null || client.player == null || client.world == null || entityType == null) {
             return Collections.emptyList();
         }
         double renderDistance = getCurrentRenderDistanceBlocks(client);
-        AABB searchBox = client.player.getBoundingBox().inflate(renderDistance);
-        return client.level.getEntities(
+        Box searchBox = client.player.getBoundingBox().expand(renderDistance);
+        return client.world.getOtherEntities(
             client.player,
             searchBox,
             entity -> entity != null
@@ -664,14 +665,14 @@ final class NodeVariableListCommandExecutor {
         );
     }
 
-    private List<Entity> findEntitiesByTypeWithinRange(net.minecraft.client.Minecraft client, EntityType<?> entityType,
+    private List<Entity> findEntitiesByTypeWithinRange(net.minecraft.client.MinecraftClient client, EntityType<?> entityType,
                                                        double range, String state) {
-        if (client == null || client.player == null || client.level == null || entityType == null) {
+        if (client == null || client.player == null || client.world == null || entityType == null) {
             return Collections.emptyList();
         }
         double searchRadius = Math.max(1.0, range);
-        AABB searchBox = client.player.getBoundingBox().inflate(searchRadius);
-        return client.level.getEntities(
+        Box searchBox = client.player.getBoundingBox().expand(searchRadius);
+        return client.world.getOtherEntities(
             client.player,
             searchBox,
             entity -> entity != null
@@ -681,61 +682,61 @@ final class NodeVariableListCommandExecutor {
         );
     }
 
-    private List<ItemEntity> findRenderedItemsByType(net.minecraft.client.Minecraft client, Item item) {
-        if (client == null || client.player == null || client.level == null || item == null) {
+    private List<ItemEntity> findRenderedItemsByType(net.minecraft.client.MinecraftClient client, Item item) {
+        if (client == null || client.player == null || client.world == null || item == null) {
             return Collections.emptyList();
         }
         double renderDistance = getCurrentRenderDistanceBlocks(client);
-        AABB searchBox = client.player.getBoundingBox().inflate(renderDistance);
-        return client.level.getEntitiesOfClass(
+        Box searchBox = client.player.getBoundingBox().expand(renderDistance);
+        return client.world.getEntitiesByClass(
             ItemEntity.class,
             searchBox,
             entity -> entity != null
                 && !entity.isRemoved()
-                && !entity.getItem().isEmpty()
-                && entity.getItem().is(item)
+                && !entity.getStack().isEmpty()
+                && entity.getStack().isOf(item)
         );
     }
 
-    private List<ItemEntity> findItemsWithinRange(net.minecraft.client.Minecraft client, Item item, double range) {
-        if (client == null || client.player == null || client.level == null || item == null) {
+    private List<ItemEntity> findItemsWithinRange(net.minecraft.client.MinecraftClient client, Item item, double range) {
+        if (client == null || client.player == null || client.world == null || item == null) {
             return Collections.emptyList();
         }
         double searchRadius = Math.max(1.0, range);
-        AABB searchBox = client.player.getBoundingBox().inflate(searchRadius);
-        return client.level.getEntitiesOfClass(
+        Box searchBox = client.player.getBoundingBox().expand(searchRadius);
+        return client.world.getEntitiesByClass(
             ItemEntity.class,
             searchBox,
             entity -> entity != null
                 && !entity.isRemoved()
-                && !entity.getItem().isEmpty()
-                && entity.getItem().is(item)
+                && !entity.getStack().isEmpty()
+                && entity.getStack().isOf(item)
         );
     }
 
-    private List<AbstractClientPlayer> findPlayersWithinRange(net.minecraft.client.Minecraft client, double range) {
-        if (client == null || client.player == null || client.level == null) {
+    private List<AbstractClientPlayerEntity> findPlayersWithinRange(net.minecraft.client.MinecraftClient client, double range) {
+        if (client == null || client.player == null || client.world == null) {
             return Collections.emptyList();
         }
         double maxDistanceSquared = Math.max(1.0, range);
         maxDistanceSquared *= maxDistanceSquared;
-        List<AbstractClientPlayer> players = new ArrayList<>();
-        for (AbstractClientPlayer player : client.level.players()) {
+        List<AbstractClientPlayerEntity> players = new ArrayList<>();
+        for (AbstractClientPlayerEntity player : client.world.getPlayers()) {
             if (player == null || player.isRemoved()) {
                 continue;
             }
-            if (player.distanceToSqr(client.player) <= maxDistanceSquared) {
+            if (player.squaredDistanceTo(client.player) <= maxDistanceSquared) {
                 players.add(player);
             }
         }
         return players;
     }
 
-    private double getCurrentRenderDistanceBlocks(net.minecraft.client.Minecraft client) {
+    private double getCurrentRenderDistanceBlocks(net.minecraft.client.MinecraftClient client) {
         if (client == null || client.options == null) {
             return 16.0;
         }
-        return Math.max(16.0, client.options.renderDistance().get() * 16.0);
+        return Math.max(16.0, client.options.getViewDistance().getValue() * 16.0);
     }
 
     private boolean isCreateListCustomRadiusEnabled() {
@@ -748,7 +749,7 @@ final class NodeVariableListCommandExecutor {
         return owner.getBooleanParameter("UseBlockCap", false);
     }
 
-    private double getCreateListSearchRadius(net.minecraft.client.Minecraft client) {
+    private double getCreateListSearchRadius(net.minecraft.client.MinecraftClient client) {
         owner.ensureCreateListRadiusParameters();
         if (!isCreateListCustomRadiusEnabled()) {
             return getCurrentRenderDistanceBlocks(client);
@@ -765,8 +766,8 @@ final class NodeVariableListCommandExecutor {
         if (parameterNode == null) {
             return null;
         }
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (client == null || client.player == null || client.level == null) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client == null || client.player == null || client.world == null) {
             if (future != null && !future.isDone()) {
                 future.complete(null);
             }
@@ -918,13 +919,13 @@ final class NodeVariableListCommandExecutor {
                 Integer zi = Node.parseIntOrNull(z);
                 if (xi != null && yi != null && zi != null) {
                     data.targetBlockPos = new BlockPos(xi, yi, zi);
-                    data.targetVector = Vec3.atCenterOf(data.targetBlockPos);
+                    data.targetVector = Vec3d.ofCenter(data.targetBlockPos);
                 }
             }
             return snapshot;
         }
 
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         NodeType elementType = list.getElementType();
         if (elementType == NodeType.PARAM_ENTITY || elementType == NodeType.PARAM_PLAYER || elementType == NodeType.PARAM_ITEM) {
             Node snapshot = new Node(elementType, 0, 0);
@@ -941,7 +942,7 @@ final class NodeVariableListCommandExecutor {
 
                 if (elementType == NodeType.PARAM_ENTITY) {
                     if (resolved != null) {
-                        ResourceLocation typeId = BuiltInRegistries.ENTITY_TYPE.getKey(resolved.getType());
+                        Identifier typeId = Registries.ENTITY_TYPE.getId(resolved.getType());
                         if (typeId != null) {
                             snapshot.setParameterValueAndPropagate("Entity", typeId.toString());
                         }
@@ -951,7 +952,7 @@ final class NodeVariableListCommandExecutor {
                         }
                         if (data != null) {
                             data.targetEntity = resolved;
-                            data.targetBlockPos = resolved.blockPosition();
+                            data.targetBlockPos = resolved.getBlockPos();
                         }
                     } else {
                         snapshot.setParameterValueAndPropagate("Entity", entry);
@@ -960,14 +961,14 @@ final class NodeVariableListCommandExecutor {
                 }
 
                 if (elementType == NodeType.PARAM_PLAYER) {
-                    if (resolved instanceof AbstractClientPlayer player) {
+                    if (resolved instanceof AbstractClientPlayerEntity player) {
                         String name = GameProfileCompatibilityBridge.getName(player.getGameProfile());
                         if (name != null) {
                             snapshot.setParameterValueAndPropagate("Player", name);
                         }
                         if (data != null) {
                             data.targetEntity = player;
-                            data.targetBlockPos = player.blockPosition();
+                            data.targetBlockPos = player.getBlockPos();
                         }
                         return snapshot;
                     }
@@ -976,15 +977,15 @@ final class NodeVariableListCommandExecutor {
 
                 if (elementType == NodeType.PARAM_ITEM) {
                     if (resolved instanceof ItemEntity itemEntity) {
-                        ItemStack stack = itemEntity.getItem();
+                        ItemStack stack = itemEntity.getStack();
                         if (stack != null && !stack.isEmpty()) {
-                            ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+                            Identifier itemId = Registries.ITEM.getId(stack.getItem());
                             if (itemId != null) {
                                 snapshot.setParameterValueAndPropagate("Item", itemId.toString());
                             }
                             if (data != null) {
                                 data.targetEntity = itemEntity;
-                                data.targetBlockPos = itemEntity.blockPosition();
+                                data.targetBlockPos = itemEntity.getBlockPos();
                             }
                             return snapshot;
                         }
@@ -1024,7 +1025,7 @@ final class NodeVariableListCommandExecutor {
         ExecutionManager.RuntimeList list = owner.resolveRuntimeList(listNode);
         String listName = Node.getParameterString(listNode, "List");
         String safeListName = listName == null ? "" : listName.trim();
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (list == null || list.isEmpty()) {
             if (reportErrors && client != null) {
                 owner.sendNodeErrorMessage(client, tr("pathmind.error.listEmptyOrMissing", safeListName));

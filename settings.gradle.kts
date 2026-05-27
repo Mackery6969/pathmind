@@ -1,13 +1,21 @@
 pluginManagement {
     repositories {
-        maven("https://maven.fabricmc.net/")
+        maven {
+            name = "Architectury"
+            url = uri("https://maven.architectury.dev/")
+        }
+        maven {
+            name = "Fabric"
+            url = uri("https://maven.fabricmc.net/")
+        }
+        maven {
+            name = "NeoForge"
+            url = uri("https://maven.neoforged.net/releases/")
+        }
+        mavenCentral()
         gradlePluginPortal()
     }
 }
 
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
-
 rootProject.name = "pathmind"
-include("fabric")
+include("common", "fabric", "neoforge")

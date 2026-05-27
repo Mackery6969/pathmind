@@ -1,4 +1,4 @@
-﻿{
+{
   "_comment": "Pathmind Editor Visual - Traducciones al Español (España)",
   "category.pathmind.general": "Pathmind",
   "gui.pathmind.open_editor": "Abrir Pathmind",
@@ -241,8 +241,8 @@
   "pathmind.node.type.sensorAtCoordinates.desc": "Detecta si el jugador está en coordenadas específicas",
   "pathmind.node.type.sensorChatMessage": "Mensaje de Chat",
   "pathmind.node.type.sensorChatMessage.desc": "Detecta si un jugador envió un mensaje de chat dentro de una ventana de tiempo",
-  "pathmind.node.type.sensorFabricEvent": "Evento de NeoForge",
-  "pathmind.node.type.sensorFabricEvent.desc": "Detecta si un evento de cliente de NeoForge seleccionado se activó dentro de una ventana de tiempo",
+  "pathmind.node.type.sensorFabricEvent": "Evento de Fabric",
+  "pathmind.node.type.sensorFabricEvent.desc": "Detecta si un evento de cliente de Fabric seleccionado se activó dentro de una ventana de tiempo",
   "pathmind.node.type.sensorDistanceBetween": "Distance Between",
   "pathmind.node.type.sensorDistanceBetween.desc": "Gets the distance between two targets (coordinate, entity, user, block, or item)",
   "pathmind.node.type.sensorGuiFilled": "GUI Filled",

@@ -9,11 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://neoforged.net/">
-    <img src="https://img.shields.io/badge/Requires-NeoForge%2021.1%2B-ff6b00?style=for-the-badge" />
-  </a>
-  <a href="https://fabricmc.net/">
-    <img src="https://img.shields.io/badge/Or-Fabric%200.17.2%2B-dbd0b4?style=for-the-badge" />
+  <a href="https://modrinth.com/mod/fabric-api">
+    <img src="https://img.shields.io/badge/Requires-Fabric%20API-2ea44f?style=for-the-badge" />
   </a>
   <a href="https://discord.gg/7nGRX2d8a6">
     <img src="https://img.shields.io/badge/Discord-Join%20server-5865F2?style=for-the-badge&logo=discord&logoColor=white" />
@@ -71,23 +68,24 @@
 ## Quick Start
 
 ### Prerequisites
-- **Minecraft**: 1.21 - 1.21.11
-- **NeoForge**: 21.1 or higher, or **Fabric Loader**: 0.17.2 or higher
-- **Required API**: Architectury API matching your Minecraft version
-- **Fabric installs**: matching Fabric API for your Minecraft version
+- **Minecraft**: 1.21 through 1.21.11
+- **Fabric Loader**: 0.17.3 or higher
+- **Fabric API**: version matching your Minecraft version
 - **Java**: 21 or higher
 
 ### Installation
 
-1. **Install a loader**
-   - Download and install NeoForge or Fabric for Minecraft 1.21 - 1.21.11
-2. **Install Pathmind**
-   - Install Architectury API for your loader
-   - Fabric users also need Fabric API
-   - Download the matching Pathmind jar for your Minecraft version
+1. **Install Fabric Loader**
+   - Download and install Fabric Loader for your Minecraft version
+   - [Download from FabricMC](https://fabricmc.net/use/installer/)
+2. **Install Fabric API**
+   - Download the matching Fabric API release for your Minecraft version
+   - [Download from Modrinth](https://modrinth.com/mod/fabric-api)
+3. **Install Pathmind**
+   - Download the Pathmind jar for your Minecraft version
    - Place it in your `mods` folder
-3. **Launch and Enjoy**
-   - Start Minecraft with your selected loader
+4. **Launch and Enjoy**
+   - Start Minecraft with Fabric
    - Use your configured keybind to open the visual editor
 
 ## How to Use

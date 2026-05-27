@@ -1,5 +1,7 @@
 package com.pathmind.util;
 
+import net.fabricmc.loader.api.FabricLoader;
+
 /**
  * Lightweight runtime check for Baritone API availability.
  * We only rely on the mod being loaded and the core API class resolving.
@@ -44,16 +46,18 @@ public final class BaritoneDependencyChecker {
         if (cachedModResult != null) {
             return cachedModResult;
         }
-        if (LoaderInfo.isModLoaded(BARITONE_MOD_ID)) {
+        if (FabricLoader.getInstance().isModLoaded(BARITONE_MOD_ID)) {
             cachedModResult = Boolean.TRUE;
             return cachedModResult;
         }
 
         // Relaxed detection for Baritone variants (e.g., meteor-bundled)
-        cachedModResult = LoaderInfo.anyLoadedModMatches((id, name) -> {
+        cachedModResult = FabricLoader.getInstance().getAllMods().stream().anyMatch(mod -> {
+            String id = mod.getMetadata() != null ? mod.getMetadata().getId() : null;
             if (id != null && id.toLowerCase(java.util.Locale.ROOT).contains("baritone")) {
                 return true;
             }
+            String name = mod.getMetadata() != null ? mod.getMetadata().getName() : null;
             return name != null && name.toLowerCase(java.util.Locale.ROOT).contains("baritone");
         });
         return cachedModResult;

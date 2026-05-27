@@ -1,238 +1,156 @@
-import org.gradle.api.GradleException
-
 plugins {
-    id("fabric-loom") version "1.14.10"
-    id("maven-publish")
+    id("dev.architectury.loom")
+    id("architectury-plugin")
+    id("com.gradleup.shadow")
 }
 
-val modId = providers.gradleProperty("mod_id").get()
-data class MinecraftVersionSpec(
-    val fabricApiVersion: String,
-    val architecturyApiVersion: String
-)
+architectury {
+    platformSetupLoomIde()
+    fabric()
+}
 
-val supportedMinecraftVersions = linkedMapOf(
-    "1.21" to MinecraftVersionSpec("0.102.0+1.21", "13.0.8"),
-    "1.21.1" to MinecraftVersionSpec("0.116.7+1.21.1", "13.0.8"),
-    "1.21.2" to MinecraftVersionSpec("0.106.1+1.21.2", "14.0.4"),
-    "1.21.3" to MinecraftVersionSpec("0.114.1+1.21.3", "14.0.4"),
-    "1.21.4" to MinecraftVersionSpec("0.119.4+1.21.4", "15.0.3"),
-    "1.21.5" to MinecraftVersionSpec("0.128.2+1.21.5", "16.1.4"),
-    "1.21.6" to MinecraftVersionSpec("0.128.2+1.21.6", "17.0.8"),
-    "1.21.7" to MinecraftVersionSpec("0.129.0+1.21.7", "17.0.8"),
-    "1.21.8" to MinecraftVersionSpec("0.133.4+1.21.8", "18.0.8"),
-    "1.21.9" to MinecraftVersionSpec("0.134.1+1.21.9", "19.0.1"),
-    "1.21.10" to MinecraftVersionSpec("0.138.4+1.21.10", "19.0.1"),
-    "1.21.11" to MinecraftVersionSpec("0.140.2+1.21.11", "19.0.1")
-)
-
-val explicitMinecraftVersion = providers.gradleProperty("mc_version").isPresent
-val minecraftVersion = providers.gradleProperty("mc_version")
-    .orElse(providers.gradleProperty("minecraft_version"))
+val requestedMinecraftVersion = rootProject.extra["requestedMinecraftVersion"] as String
+val yarnMappings = rootProject.extra["yarnMappings"] as String
+val fabricApiVersion = rootProject.extra["fabricApiVersion"] as String
+val architecturyApiVersion = providers.gradleProperty("architectury_api_version")
+    .orElse(provider { rootProject.extra["architecturyApiVersion"] as String })
     .get()
-val requestedSpec = supportedMinecraftVersions[minecraftVersion]
-    ?: throw GradleException("No Fabric build spec configured for Minecraft $minecraftVersion")
-val fabricLoaderVersion = providers.gradleProperty("fabric_loader_version").get()
-val fabricApiVersion = if (explicitMinecraftVersion) {
-    requestedSpec.fabricApiVersion
-} else {
-    providers.gradleProperty("fabric_api_version")
-        .orElse(provider { requestedSpec.fabricApiVersion })
-        .get()
-}
-val architecturyApiVersion = if (explicitMinecraftVersion) {
-    requestedSpec.architecturyApiVersion
-} else {
-    providers.gradleProperty("architectury_api_version")
-        .orElse(provider { requestedSpec.architecturyApiVersion })
-        .get()
-}
-val modVersion = providers.gradleProperty("mod_version").get()
-val usesGeneratedCompatibilitySources = minecraftVersion in setOf("1.21.9", "1.21.10", "1.21.11")
-val usesRenamedMojangApis = minecraftVersion == "1.21.11"
-val keyMappingCategoryIdFactory = if (usesRenamedMojangApis) {
-    "net.minecraft.resources.Identifier.fromNamespaceAndPath"
-} else {
-    "net.minecraft.resources.ResourceLocation.fromNamespaceAndPath"
-}
-val renamedMojangApiReplacements = buildList {
-    if (usesRenamedMojangApis) {
-        add("net.minecraft.resources.ResourceLocation" to "net.minecraft.resources.Identifier")
-        add("ResourceLocation" to "Identifier")
-        add("net.minecraft.Util" to "net.minecraft.util.Util")
-        add("net.minecraft.world.entity.npc.Villager" to "net.minecraft.world.entity.npc.villager.Villager")
-        add("net.minecraft.world.entity.npc.VillagerData" to "net.minecraft.world.entity.npc.villager.VillagerData")
-        add("net.minecraft.world.entity.npc.VillagerProfession" to "net.minecraft.world.entity.npc.villager.VillagerProfession")
-        add("net.minecraft.world.entity.npc.VillagerTrades" to "net.minecraft.world.entity.npc.villager.VillagerTrades")
-        add("net.minecraft.world.entity.npc.VillagerType" to "net.minecraft.world.entity.npc.villager.VillagerType")
-        add("net.minecraft.world.entity.MobSpawnType" to "net.minecraft.world.entity.EntitySpawnReason")
-        add("MobSpawnType" to "EntitySpawnReason")
-        add("net.minecraft.client.renderer.RenderType" to "net.minecraft.client.renderer.rendertype.RenderType")
-        add("protected void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta)" to "protected void renderContents(GuiGraphics context, int mouseX, int mouseY, float delta)")
-        add("RenderType.lines()" to "net.minecraft.client.renderer.rendertype.RenderTypes.lines()")
-        add(".location()" to ".identifier()")
-    }
-    add("minecraft.screen.renderWithTooltip(context, mouseX, mouseY, delta)" to "minecraft.screen.renderWithTooltipAndSubtitles(context, mouseX, mouseY, delta)")
-    add("client.getWindow().getWindow()" to "client.getWindow().handle()")
-    add("window.getWindow()" to "window.handle()")
-    add("    public static KeyMapping STOP_GRAPHS;" to "    public static KeyMapping STOP_GRAPHS;\n    private static final KeyMapping.Category GENERAL_CATEGORY = KeyMapping.Category.register($keyMappingCategoryIdFactory(\"pathmind\", \"general\"));")
-    add("\"category.pathmind.general\"" to "GENERAL_CATEGORY")
-    add("public boolean mouseClicked(double mouseXDouble, double mouseYDouble, int button) {" to "public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean inBounds) {\n        double mouseXDouble = click.x();\n        double mouseYDouble = click.y();\n        int button = click.button();")
-    add("public boolean mouseClicked(double mouseX, double mouseY, int button) {" to "public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean inBounds) {\n        double mouseX = click.x();\n        double mouseY = click.y();\n        int button = click.button();")
-    add("public boolean mouseDragged(double mouseXDouble, double mouseYDouble, int button, double deltaX, double deltaY) {" to "public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {\n        double mouseXDouble = click.x();\n        double mouseYDouble = click.y();\n        int button = click.button();")
-    add("public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {" to "public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {\n        double mouseX = click.x();\n        double mouseY = click.y();\n        int button = click.button();")
-    add("public boolean mouseReleased(double mouseX, double mouseY, int button) {" to "public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {\n        double mouseX = click.x();\n        double mouseY = click.y();\n        int button = click.button();")
-    add("public boolean keyPressed(int keyCode, int scanCode, int modifiers) {" to "public boolean keyPressed(net.minecraft.client.input.KeyEvent input) {\n        int keyCode = input.key();\n        int scanCode = input.scancode();\n        int modifiers = input.modifiers();")
-    add("public boolean charTyped(char chr, int modifiers) {" to "public boolean charTyped(net.minecraft.client.input.CharacterEvent input) {\n        char chr = (char) input.codepoint();\n        int modifiers = input.modifiers();")
-    add("return super.mouseClicked(mouseXDouble, mouseYDouble, button);" to "return super.mouseClicked(click, inBounds);")
-    add("return super.mouseClicked(mouseX, mouseY, button);" to "return super.mouseClicked(click, inBounds);")
-    add("return super.mouseDragged(mouseXDouble, mouseYDouble, button, deltaX, deltaY);" to "return super.mouseDragged(click, deltaX, deltaY);")
-    add("return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);" to "return super.mouseDragged(click, deltaX, deltaY);")
-    add("return super.mouseReleased(mouseX, mouseY, button);" to "return super.mouseReleased(click);")
-    add("return super.keyPressed(keyCode, scanCode, modifiers);" to "return super.keyPressed(input);")
-    add("return super.charTyped(chr, modifiers);" to "return super.charTyped(input);")
-    add("ScreenKeyboardEvents.afterKeyPress(screen).register((currentScreen, keyCode, scanCode, modifiers) -> {" to "ScreenKeyboardEvents.afterKeyPress(screen).register((currentScreen, input) -> {\n            int keyCode = input.key();")
-    add("import net.minecraft.world.InteractionResultHolder;" to "import net.minecraft.world.InteractionResult;")
-    add("InteractionResultHolder.pass(player.getItemInHand(hand))" to "InteractionResult.PASS")
-}
-fun transformRenamedMojangLine(line: String): String {
-    var current = renamedMojangApiReplacements.fold(line) { value, replacement ->
-        value.replace(replacement.first, replacement.second)
-    }
-    current = Regex("""(?<![A-Za-z0-9_])(?!(?:super)\b)([A-Za-z_][A-Za-z0-9_.]*)\.mouseClicked\(([^,]+),\s*([^,]+),\s*button\)""").replace(current) {
-        "com.pathmind.util.InputCompatibilityBridge.mouseClicked(${it.groupValues[1]}, ${it.groupValues[2]}, ${it.groupValues[3]}, button)"
-    }
-    current = Regex("""(?<![A-Za-z0-9_])(?!(?:super)\b)([A-Za-z_][A-Za-z0-9_.]*)\.mouseReleased\(([^,]+),\s*([^,]+),\s*button\)""").replace(current) {
-        "com.pathmind.util.InputCompatibilityBridge.mouseReleased(${it.groupValues[1]}, ${it.groupValues[2]}, ${it.groupValues[3]}, button)"
-    }
-    current = Regex("""(?<![A-Za-z0-9_])(?!(?:super)\b)([A-Za-z_][A-Za-z0-9_.]*)\.mouseDragged\(([^,]+),\s*([^,]+),\s*button,\s*deltaX,\s*deltaY\)""").replace(current) {
-        "com.pathmind.util.InputCompatibilityBridge.mouseDragged(${it.groupValues[1]}, ${it.groupValues[2]}, ${it.groupValues[3]}, button, deltaX, deltaY)"
-    }
-    current = Regex("""(?<![A-Za-z0-9_])(?!(?:super)\b)([A-Za-z_][A-Za-z0-9_.]*)\.keyPressed\(keyCode,\s*scanCode,\s*modifiers\)""").replace(current) {
-        "com.pathmind.util.InputCompatibilityBridge.keyPressed(${it.groupValues[1]}, keyCode, scanCode, modifiers)"
-    }
-    current = Regex("""(?<![A-Za-z0-9_])(?!(?:super)\b)([A-Za-z_][A-Za-z0-9_.]*)\.charTyped\(chr,\s*modifiers\)""").replace(current) {
-        "com.pathmind.util.InputCompatibilityBridge.charTyped(${it.groupValues[1]}, chr, modifiers)"
-    }
-    return current
-}
-val renamedMojangSourceDir = layout.buildDirectory.dir("generated/sources/renamedMojang/java")
-val prepareRenamedMojangSources = tasks.register<Sync>("prepareRenamedMojangSources") {
-    inputs.property("pathmindSourceTransform", "fabric-1.21.9-ui-input-v3-$usesRenamedMojangApis")
-    from(rootProject.file("src/main/java")) {
-        exclude("com/pathmind/PathmindMod.java")
-        exclude("com/pathmind/PathmindClientMod.java")
-        exclude("com/pathmind/util/LoaderInfo.java")
-        exclude("com/pathmind/util/UseItemCallbackCompat.java")
-        exclude("com/pathmind/mixin/GameRendererMixin.java")
-    }
-    from(rootProject.file("src/compat/legacy/base/java")) {
-        exclude("com/pathmind/screen/PathmindMainMenuIntegration.java")
-    }
-    from(rootProject.file("src/compat/legacy/render/old/java"))
-    from(rootProject.file("src/fabric/java/com/pathmind"))
-    include("**/*.java")
-    into(renamedMojangSourceDir)
-    filteringCharset = "UTF-8"
-    filter { line: String -> transformRenamedMojangLine(line) }
-}
 
-version = "$modVersion+mc$minecraftVersion-fabric"
-group = providers.gradleProperty("maven_group").get()
+// Compat source set selection mirrors the MC-version-specific compat dirs.
+val legacyInputVersions = setOf(
+    "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8"
+)
+val usesLegacyInputApis = requestedMinecraftVersion in legacyInputVersions
+val typedUseItemCallbackVersions = setOf("1.21", "1.21.1")
+val usesTypedUseItemCallback = requestedMinecraftVersion in typedUseItemCallbackVersions
+val oldLegacyRenderVersions = setOf("1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4")
+val usesOldLegacyRenderApis = requestedMinecraftVersion in oldLegacyRenderVersions
+val preAllocatorLegacyRenderVersions = setOf("1.21", "1.21.1")
+val allocatorLightmapLegacyRenderVersions = setOf("1.21.2", "1.21.3")
+val allocatorNoLightmapLegacyRenderVersions = setOf("1.21.4")
+val transitionalLegacyRenderVersions = setOf("1.21.5")
+val usesTransitionalLegacyRenderApis = requestedMinecraftVersion in transitionalLegacyRenderVersions
+val midInputVersions = setOf("1.21.9", "1.21.10")
+val usesMidInputApis = requestedMinecraftVersion in midInputVersions
 
 base {
-    archivesName.set("${providers.gradleProperty("archives_base_name").get()}-fabric")
-}
-
-java {
-    withSourcesJar()
-    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+    archivesName.set("${rootProject.property("archives_base_name") as String}-fabric")
 }
 
 loom {
-    accessWidenerPath = rootProject.file("src/main/resources/pathmind.accesswidener")
+    accessWidenerPath = project(":common").file("src/main/resources/pathmind.accesswidener")
 }
 
-repositories {
-    mavenCentral()
-    maven("https://maven.fabricmc.net/")
-    maven("https://maven.architectury.dev/")
+val common: Configuration by configurations.creating
+val shadowCommon: Configuration by configurations.creating
+
+configurations {
+    compileClasspath.get().extendsFrom(common)
+    runtimeClasspath.get().extendsFrom(common)
+    named("developmentFabric").get().extendsFrom(common)
 }
 
 dependencies {
-    minecraft("com.mojang:minecraft:$minecraftVersion")
-    mappings(loom.officialMojangMappings())
-    modImplementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
+    minecraft("com.mojang:minecraft:$requestedMinecraftVersion")
+    mappings("net.fabricmc:yarn:$yarnMappings:v2")
+    modImplementation("net.fabricmc:fabric-loader:${rootProject.property("loader_version")}")
+
+    modApi("dev.architectury:architectury-fabric:$architecturyApiVersion")
     modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
-    modImplementation("dev.architectury:architectury-fabric:$architecturyApiVersion")
 
-    implementation("com.google.code.gson:gson:2.10.1")
+    common(project(":common", "namedElements")) { isTransitive = false }
+    shadowCommon(project(":common", "transformProductionFabric")) { isTransitive = false }
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    val baritoneApiJar: File? = run {
+        val candidates = listOfNotNull(
+            System.getenv("BARITONE_API_JAR"),
+            project.findProperty("baritoneApiPath") as? String,
+            "libs/baritone-api-fabric-1.15.0.jar",
+            "run/mods/baritone-api-fabric-1.15.0.jar"
+        ).map { file(it) }
+        candidates.firstOrNull { it.exists() }
+    }
+
+    val baritoneRuntimeTargets = setOf("1.21.6", "1.21.7", "1.21.8")
+    val enableBaritoneRuntime = (project.findProperty("withBaritoneRuntime") as? String)
+        ?.toBooleanStrictOrNull() ?: false
+
+    baritoneApiJar?.let { jar ->
+        val baritoneApi = files(jar)
+        modCompileOnly(baritoneApi)
+        if (enableBaritoneRuntime && requestedMinecraftVersion in baritoneRuntimeTargets) {
+            modLocalRuntime(baritoneApi)
+        }
+    }
 }
 
 sourceSets {
     main {
         java {
-            if (usesGeneratedCompatibilitySources) {
-                setSrcDirs(listOf(renamedMojangSourceDir))
+            setSrcDirs(listOf("src/main/java"))
+            exclude("com/pathmind/screen/PathmindMarketplaceScreen.java")
+            exclude("com/pathmind/screen/PathmindVisualEditorScreen.java")
+            if (usesLegacyInputApis) {
+                srcDir("src/compat/legacy/base/java")
+                if (usesTypedUseItemCallback) {
+                    srcDir("src/compat/legacy/useitem/typed/java")
+                } else {
+                    srcDir("src/compat/legacy/useitem/action/java")
+                }
+                if (usesOldLegacyRenderApis) {
+                    when (requestedMinecraftVersion) {
+                        in preAllocatorLegacyRenderVersions -> srcDir("src/compat/legacy/render/old/java")
+                        in allocatorLightmapLegacyRenderVersions -> srcDir("src/compat/legacy/render/old-allocator/java")
+                        in allocatorNoLightmapLegacyRenderVersions -> srcDir("src/compat/legacy/render/old-allocator-nolightmap/java")
+                        else -> throw GradleException("No legacy old render source set configured for Minecraft $requestedMinecraftVersion")
+                    }
+                } else if (usesTransitionalLegacyRenderApis) {
+                    srcDir("src/compat/legacy/render/transitional/java")
+                } else {
+                    srcDir("src/compat/legacy/render/late/java")
+                }
+            } else if (usesMidInputApis) {
+                srcDir("src/compat/mid/java")
             } else {
-                setSrcDirs(
-                    listOf(
-                        rootProject.file("src/main/java"),
-                        rootProject.file("src/compat/legacy/base/java"),
-                        rootProject.file("src/compat/legacy/render/old/java"),
-                        rootProject.file("src/fabric/java/com/pathmind")
-                    )
-                )
-                exclude("com/pathmind/PathmindMod.java")
-                exclude("com/pathmind/PathmindClientMod.java")
-                exclude("com/pathmind/util/LoaderInfo.java")
-                exclude("com/pathmind/util/UseItemCallbackCompat.java")
-                exclude("com/pathmind/mixin/GameRendererMixin.java")
-                exclude("com/pathmind/screen/PathmindMainMenuIntegration.java")
+                srcDir("src/compat/modern/java")
             }
-        }
-        resources {
-            setSrcDirs(listOf(rootProject.file("src/main/resources")))
-            exclude("META-INF/neoforge.mods.toml")
         }
     }
 }
 
 tasks.processResources {
     val properties = mapOf(
-        "version" to project.version,
-        "minecraft_version" to minecraftVersion,
-        "fabric_loader_version" to fabricLoaderVersion,
+        "version" to version,
+        "minecraft_version" to requestedMinecraftVersion,
+        "loader_version" to rootProject.property("loader_version"),
         "fabric_api_version" to fabricApiVersion,
-        "architectury_api_version" to architecturyApiVersion,
+        "architectury_api_version" to architecturyApiVersion
     )
     inputs.properties(properties)
-
-    filesMatching("fabric.mod.json") {
-        expand(properties)
-    }
+    filesMatching("fabric.mod.json") { expand(properties) }
 }
 
-tasks.withType<JavaCompile>().configureEach {
-    if (usesGeneratedCompatibilitySources) {
-        dependsOn(prepareRenamedMojangSources)
-    }
-    options.encoding = "UTF-8"
-    options.release.set(21)
-    options.compilerArgs.addAll(listOf("-Xlint:-deprecation", "-Xlint:-removal"))
+tasks.shadowJar {
+    exclude("architectury.common.json")
+    configurations = listOf(project.configurations["shadowCommon"])
+    archiveClassifier.set("dev-shadow")
 }
 
-tasks.test {
-    useJUnitPlatform()
+tasks.remapJar {
+    injectAccessWidener.set(true)
+    inputFile.set(tasks.shadowJar.get().archiveFile)
+    archiveClassifier.set(null as String?)
+    dependsOn(tasks.shadowJar)
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("mavenJava") {
-            from(components["java"])
-        }
-    }
+tasks.jar {
+    archiveClassifier.set("dev")
+    from("LICENSE") { rename { "${it}_${base.archivesName.get()}" } }
+}
+
+tasks.sourcesJar {
+    val commonSources = project(":common").tasks.getByName<Jar>("sourcesJar")
+    dependsOn(commonSources)
+    from(commonSources.archiveFile.map { zipTree(it) })
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
