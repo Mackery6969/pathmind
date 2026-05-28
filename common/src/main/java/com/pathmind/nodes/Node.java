@@ -6268,6 +6268,9 @@ public class Node {
         if (matches.isEmpty()) {
             return Optional.empty();
         }
+        for (Entity match : matches) {
+            TransientEntityPositionTracker.remember(match);
+        }
         Entity nearest = Collections.min(matches, Comparator.comparingDouble(entity -> entity.squaredDistanceTo(client.player)));
         return Optional.of(nearest);
     }

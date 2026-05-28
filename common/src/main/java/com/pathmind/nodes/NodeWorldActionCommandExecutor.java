@@ -38,6 +38,9 @@ import java.util.concurrent.CompletableFuture;
 
 final class NodeWorldActionCommandExecutor {
     private static final long ITEM_USE_SYNC_TIMEOUT_MS = 300L;
+    private static final long TRANSIENT_ENTITY_TRACK_DURATION_MS = 4_500L;
+    private static final long TRANSIENT_ENTITY_TRACK_INTERVAL_MS = 25L;
+    private static final double TRANSIENT_ENTITY_TRACK_RANGE = 128.0D;
 
     private final Node owner;
 
@@ -130,6 +133,10 @@ final class NodeWorldActionCommandExecutor {
                             }
                         }
                     });
+
+                    if (isEnderEyeStack(stack)) {
+                        startTransientEntityTracking(client, TransientEntityPositionTracker.EYE_OF_ENDER_ID);
+                    }
 
                     if (durationSeconds > 0.0) {
                         Thread.sleep((long) (durationSeconds * 1000));
@@ -239,7 +246,34 @@ final class NodeWorldActionCommandExecutor {
             || item == Items.POTION
             || item == Items.SPLASH_POTION
             || item == Items.LINGERING_POTION
-            || item == Items.MILK_BUCKET;
+            || item == Items.MILK_BUCKET
+            || item == Items.ENDER_EYE;
+    }
+
+    private boolean isEnderEyeStack(ItemStack stack) {
+        return stack != null && !stack.isEmpty() && stack.isOf(Items.ENDER_EYE);
+    }
+
+    private void startTransientEntityTracking(net.minecraft.client.MinecraftClient client, String entityId) {
+        Thread tracker = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + TRANSIENT_ENTITY_TRACK_DURATION_MS;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    owner.supplyFromClient(client, () -> {
+                        TransientEntityPositionTracker.rememberNearby(client, entityId, TRANSIENT_ENTITY_TRACK_RANGE);
+                        return null;
+                    });
+                    Thread.sleep(TRANSIENT_ENTITY_TRACK_INTERVAL_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (RuntimeException ignored) {
+                    return;
+                }
+            }
+        }, "Pathmind-TrackTransientEntity");
+        tracker.setDaemon(true);
+        tracker.start();
     }
 
     private boolean prepareSelectedItemForUse(net.minecraft.client.MinecraftClient client,

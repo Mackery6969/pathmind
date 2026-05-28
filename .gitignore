@@ -8,10 +8,13 @@
 /buildSrc/build/
 /common/.gradle/
 /common/build/
+/common/run/
 /fabric/.gradle/
 /fabric/build/
+/fabric/run/
 /neoforge/.gradle/
 /neoforge/build/
+/neoforge/run/
 
 # IDE / editor files
 *.iml

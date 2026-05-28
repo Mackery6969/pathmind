@@ -78,10 +78,56 @@ final class EntityParameterDefinition {
             }
         }
         if (nearest == null) {
+            Optional<Vec3d> recent = resolveRecentTransientPosition(owner, entityIds, client, range, data);
+            if (recent.isPresent()) {
+                return recent;
+            }
             owner.sendParameterSearchFailure(NodeBehaviorDefinitionSupport.noNearbyEntityMessage(owner), future);
             return Optional.empty();
         }
         return resolvedEntityPosition(nearest, nearestId, data);
+    }
+
+    private static Optional<Vec3d> resolveRecentTransientPosition(Node owner, List<String> entityIds, MinecraftClient client,
+                                                                  double range, RuntimeParameterData data) {
+        if (entityIds == null || entityIds.isEmpty() || client == null || client.player == null) {
+            return Optional.empty();
+        }
+
+        TransientEntityPositionTracker.TrackedPosition nearest = null;
+        double nearestDistance = Double.MAX_VALUE;
+        for (String candidateId : entityIds) {
+            Identifier identifier = Identifier.tryParse(candidateId);
+            if (identifier == null || !Registries.ENTITY_TYPE.containsId(identifier)) {
+                continue;
+            }
+            EntityType<?> entityType = Registries.ENTITY_TYPE.get(identifier);
+            Optional<TransientEntityPositionTracker.TrackedPosition> recent =
+                TransientEntityPositionTracker.findRecent(client, entityType, range);
+            if (recent.isEmpty()) {
+                continue;
+            }
+            Vec3d playerPos = EntityCompatibilityBridge.getPos(client.player);
+            if (playerPos == null) {
+                playerPos = new Vec3d(client.player.getX(), client.player.getY(), client.player.getZ());
+            }
+            double distance = recent.get().position().squaredDistanceTo(playerPos);
+            if (nearest == null || distance < nearestDistance) {
+                nearest = recent.get();
+                nearestDistance = distance;
+            }
+        }
+
+        if (nearest == null) {
+            return Optional.empty();
+        }
+        if (data != null) {
+            data.targetEntity = null;
+            data.targetEntityId = nearest.entityId();
+            data.targetBlockPos = nearest.blockPos();
+            data.targetVector = nearest.position();
+        }
+        return Optional.of(nearest.position());
     }
 
     private static Node.ListValueEntry resolveListEntry(Node owner, Node parameterNode, MinecraftClient client) {
