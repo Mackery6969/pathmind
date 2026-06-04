@@ -36,6 +36,9 @@ import java.util.concurrent.CompletableFuture;
 final class NodeVariableListCommandExecutor {
     private static final double NEOFORGE_DEFAULT_BLOCK_LIST_RADIUS = 64.0;
     private static final int NEOFORGE_UNCAPPED_BLOCK_LIST_LIMIT = 4096;
+    private static final String LOOK_DIRECTION_SOURCE_KEY = "__pathmind_source";
+    private static final String LOOK_DIRECTION_AXIS_KEY = "__pathmind_look_axis";
+    private static final String LOOK_DIRECTION_SOURCE_VALUE = "look_direction";
 
     private final Node owner;
 
@@ -90,24 +93,16 @@ final class NodeVariableListCommandExecutor {
             values = valueNode.exportParameterValues();
             valueType = valueNode.getResolvedValueType();
         } else if (valueType == NodeType.SENSOR_DISTANCE_BETWEEN) {
-            Node parameterNodeA = valueNode.getAttachedParameter(0);
-            Node parameterNodeB = valueNode.getAttachedParameter(1);
+            Node parameterNodeA = valueNode.resolveSensorParameterNode(valueNode.getAttachedParameter(0), 0);
+            Node parameterNodeB = valueNode.resolveSensorParameterNode(valueNode.getAttachedParameter(1), 1);
             if (parameterNodeA == null || parameterNodeB == null) {
                 owner.setNextOutputSocket(Node.NO_OUTPUT);
                 NodeExecutionCompletion.fail(owner, client, future,
                     tr("pathmind.error.distanceBetweenRequiresTwoParameters"));
                 return;
             }
-            if ((!valueNode.providesTrait(parameterNodeA, NodeValueTrait.ENTITY)
-                && !valueNode.providesTrait(parameterNodeA, NodeValueTrait.COORDINATE)
-                && !valueNode.providesTrait(parameterNodeA, NodeValueTrait.BLOCK)
-                && !valueNode.providesTrait(parameterNodeA, NodeValueTrait.ITEM)
-                && !valueNode.providesTrait(parameterNodeA, NodeValueTrait.PLAYER))
-                || (!valueNode.providesTrait(parameterNodeB, NodeValueTrait.ENTITY)
-                && !valueNode.providesTrait(parameterNodeB, NodeValueTrait.COORDINATE)
-                && !valueNode.providesTrait(parameterNodeB, NodeValueTrait.BLOCK)
-                && !valueNode.providesTrait(parameterNodeB, NodeValueTrait.ITEM)
-                && !valueNode.providesTrait(parameterNodeB, NodeValueTrait.PLAYER))) {
+            if (!valueNode.isDistanceBetweenSupportedTarget(parameterNodeA)
+                || !valueNode.isDistanceBetweenSupportedTarget(parameterNodeB)) {
                 owner.setNextOutputSocket(Node.NO_OUTPUT);
                 NodeExecutionCompletion.fail(owner, client, future,
                     tr("pathmind.error.distanceBetweenInvalidParameters"));
@@ -198,6 +193,7 @@ final class NodeVariableListCommandExecutor {
         }
 
         Map<String, String> updatedValues = snapshot.exportParameterValues();
+        preserveSingleAxisLookMetadata(values, updatedValues);
         ExecutionManager.RuntimeVariable updated = new ExecutionManager.RuntimeVariable(valueType, updatedValues);
         manager.setRuntimeVariable(startNode, variableName.trim(), updated);
         NodeExecutionCompletion.complete(future);
@@ -842,6 +838,13 @@ final class NodeVariableListCommandExecutor {
         if (source == null) {
             return Collections.emptyMap();
         }
+        if (source.getType() == NodeType.LIST_ITEM) {
+            Node resolved = owner.resolveListItemValueNode(source, null, false, null);
+            if (resolved == null || resolved == source) {
+                return Collections.emptyMap();
+            }
+            return exportResolvedParameterValues(resolved);
+        }
         Map<String, String> values = source.exportParameterValues();
         if (values == null || values.isEmpty()) {
             return values;
@@ -861,7 +864,24 @@ final class NodeVariableListCommandExecutor {
             values.put(key, resolvedValue);
             values.put(Node.normalizeParameterKey(key), resolvedValue);
         }
+        if (source.getType() == NodeType.SENSOR_LOOK_DIRECTION && source.isSensorLookSingleAxisMode()) {
+            values.put(LOOK_DIRECTION_SOURCE_KEY, LOOK_DIRECTION_SOURCE_VALUE);
+            values.put(LOOK_DIRECTION_AXIS_KEY, source.getSensorLookComponentKey());
+        }
         return values;
+    }
+
+    private void preserveSingleAxisLookMetadata(Map<String, String> sourceValues, Map<String, String> targetValues) {
+        if (sourceValues == null || sourceValues.isEmpty() || targetValues == null) {
+            return;
+        }
+        String source = sourceValues.get(LOOK_DIRECTION_SOURCE_KEY);
+        String axis = sourceValues.get(LOOK_DIRECTION_AXIS_KEY);
+        if (!LOOK_DIRECTION_SOURCE_VALUE.equals(source) || axis == null || axis.isEmpty()) {
+            return;
+        }
+        targetValues.put(LOOK_DIRECTION_SOURCE_KEY, LOOK_DIRECTION_SOURCE_VALUE);
+        targetValues.put(LOOK_DIRECTION_AXIS_KEY, axis);
     }
 
     private Map<String, String> deserializeListEntryValues(String entry) {

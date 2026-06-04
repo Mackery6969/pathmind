@@ -1,6 +1,8 @@
 package com.pathmind.neoforge;
 
 import com.pathmind.PathmindCommon;
+import com.pathmind.execution.ExecutionManager;
+import com.pathmind.nodes.NodeType;
 import com.pathmind.util.ChatMessageTracker;
 import com.pathmind.util.FabricEventTracker;
 import net.minecraft.client.Minecraft;
@@ -31,6 +33,9 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import org.lwjgl.glfw.GLFW;
 
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 
 @Mod(PathmindCommon.MOD_ID)
 public class PathmindNeoForge {
@@ -388,7 +393,14 @@ public class PathmindNeoForge {
         Component message = event.getMessage();
         String text = message != null ? message.getString() : "";
         if (!text.isBlank()) {
-            ChatMessageTracker.record(extractChatSender(text), text, System.currentTimeMillis());
+            String senderName = extractChatSender(text);
+            ChatMessageTracker.record(senderName, text, System.currentTimeMillis());
+            if (!event.isSystem()) {
+                ExecutionManager.getInstance().triggerEventFunction(
+                    ExecutionManager.CHAT_MESSAGE_EVENT_NAME,
+                    createChatRuntimeVariables(senderName, text)
+                );
+            }
         }
         if (event.isSystem()) {
             fireLoaderEvent(EVT_NEOFORGE_MESSAGE_RECEIVE_GAME, EVT_FABRIC_MESSAGE_RECEIVE_GAME);
@@ -474,6 +486,27 @@ public class PathmindNeoForge {
 
     private static void fireLoaderEvent(String eventName, String... compatibilityAliases) {
         FabricEventTracker.record(eventName, compatibilityAliases);
+    }
+
+    private Map<String, ExecutionManager.RuntimeVariable> createChatRuntimeVariables(String senderName, String rawMessage) {
+        Map<String, ExecutionManager.RuntimeVariable> variables = new LinkedHashMap<>();
+        variables.put(
+            ExecutionManager.CHAT_SENDER_VARIABLE_NAME,
+            createRuntimeVariable(NodeType.PARAM_PLAYER, "Player", senderName)
+        );
+        variables.put(
+            ExecutionManager.CHAT_MESSAGE_VARIABLE_NAME,
+            createRuntimeVariable(NodeType.PARAM_MESSAGE, "Text", rawMessage)
+        );
+        return variables;
+    }
+
+    private ExecutionManager.RuntimeVariable createRuntimeVariable(NodeType type, String key, String value) {
+        Map<String, String> values = new LinkedHashMap<>();
+        String safeValue = value == null ? "" : value;
+        values.put(key, safeValue);
+        values.put(key.toLowerCase(Locale.ROOT), safeValue);
+        return new ExecutionManager.RuntimeVariable(type, values);
     }
 
     private static boolean isClientLevel(Level level) {

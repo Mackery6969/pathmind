@@ -12,6 +12,7 @@ import com.pathmind.nodes.NodeConnection;
 import com.pathmind.nodes.NodeParameter;
 import com.pathmind.nodes.NodeType;
 import com.pathmind.nodes.ParameterType;
+import com.pathmind.nodes.RelativeInputSupport;
 import com.pathmind.ui.menu.ContextMenuSelection;
 import com.pathmind.ui.menu.ContextMenuRenderer;
 import com.pathmind.ui.animation.AnimatedValue;
@@ -23,6 +24,7 @@ import com.pathmind.util.BlockSelection;
 import com.pathmind.util.MatrixStackBridge;
 import com.pathmind.util.DropdownLayoutHelper;
 import com.pathmind.util.GuiSelectionMode;
+import com.pathmind.util.LegacyVariableSyntaxCompat;
 import com.pathmind.util.TextRenderUtil;
 import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.MinecraftClient;
@@ -89,10 +91,14 @@ public class NodeGraph {
     private static final int CONNECTION_CUT_PREVIEW_COLOR = 0xCCFF6B6B;
     private static final int STICKY_NOTE_MAX_CHARS = 4096;
     private static final int DENSE_VIEW_VISIBLE_NODE_THRESHOLD = 120;
+    private static final int COMPACT_VIEW_VISIBLE_NODE_THRESHOLD = 40;
+    private static final int PROFILER_OVERLAY_MARGIN = 10;
+    private static final int PROFILER_OVERLAY_PADDING = 6;
 
     private final List<Node> nodes;
     private final List<NodeConnection> connections;
     private final List<Node> cachedRootNodes;
+    private final List<Node> cachedVisibleRootNodes;
     private final Map<Node, SelectionBounds> cachedHierarchyBounds;
     private final Map<Node, Integer> cachedHierarchyNodeCounts;
     private final Set<SocketKey> connectedInputSockets;
@@ -116,6 +122,20 @@ public class NodeGraph {
     private int cameraX = 0;
     private int cameraY = 0;
     private boolean isPanning = false;
+    private double profilerRenderMs = 0.0;
+    private double profilerNodeMs = 0.0;
+    private double profilerConnectionMs = 0.0;
+    private double profilerDropdownMs = 0.0;
+    private double profilerHoverMs = 0.0;
+    private double profilerHitTestAvgMs = 0.0;
+    private double profilerHitTestAvgRoots = 0.0;
+    private int profilerVisibleNodes = 0;
+    private int profilerDrawnNodes = 0;
+    private int profilerVisibleRoots = 0;
+    private int profilerDrawnConnections = 0;
+    private long profilerHitTestTotalNanos = 0L;
+    private long profilerHitTestCallCount = 0L;
+    private long profilerHitTestTotalRoots = 0L;
     private int panStartX, panStartY;
     private int panStartCameraX, panStartCameraY;
     
@@ -178,9 +198,20 @@ public class NodeGraph {
     private int sidebarWidthForRendering = 180;
     private boolean executionEnabled = true;
     private boolean hierarchyGeometryDirty = true;
+    private boolean visibleRootsDirty = true;
     private boolean connectionIndexDirty = true;
+    private boolean compactViewportMode = false;
     private boolean denseViewportMode = false;
     private int visibleNodeCountForFrame = 0;
+    private final Map<TrimKey, String> trimmedTextCache = new HashMap<>();
+    private final Map<Node, Map<String, ParameterLayoutCacheEntry>> parameterLayoutCache = new WeakHashMap<>();
+    private final Map<String, Set<String>> runtimeVariableNamesFrameCache = new HashMap<>();
+    private Set<String> cachedBaseRuntimeVariableNames = null;
+    private int cachedVisibleNodeCount = 0;
+    private int visibleRootsCameraX = Integer.MIN_VALUE;
+    private int visibleRootsCameraY = Integer.MIN_VALUE;
+    private int visibleRootsViewportWidth = Integer.MIN_VALUE;
+    private int visibleRootsViewportHeight = Integer.MIN_VALUE;
 
     private String activePreset;
     private final Set<Node> cascadeDeletionPreviewNodes;
@@ -337,10 +368,10 @@ public class NodeGraph {
     private static final int MAX_HISTORY = 50;
     private static final Map<String, SessionViewportState> SESSION_VIEWPORT_STATES = new ConcurrentHashMap<>();
     private boolean selectionBoxActive = false;
-    private int selectionBoxStartX = 0;
-    private int selectionBoxStartY = 0;
-    private int selectionBoxCurrentX = 0;
-    private int selectionBoxCurrentY = 0;
+    private int selectionBoxStartWorldX = 0;
+    private int selectionBoxStartWorldY = 0;
+    private int selectionBoxCurrentWorldX = 0;
+    private int selectionBoxCurrentWorldY = 0;
     private boolean multiDragActive = false;
     private final Map<Node, DragStartInfo> multiDragStartPositions = new HashMap<>();
     private boolean selectionDeletionPreviewActive = false;
@@ -594,6 +625,7 @@ public class NodeGraph {
         this.nodes = new ArrayList<>();
         this.connections = new ArrayList<>();
         this.cachedRootNodes = new ArrayList<>();
+        this.cachedVisibleRootNodes = new ArrayList<>();
         this.cachedHierarchyBounds = new HashMap<>();
         this.cachedHierarchyNodeCounts = new HashMap<>();
         this.connectedInputSockets = new HashSet<>();
@@ -851,24 +883,24 @@ public class NodeGraph {
     }
 
     private Node getNodeAtWorld(int worldX, int worldY) {
-        rebuildHierarchyCacheIfNeeded();
-        Set<Node> processedRoots = new HashSet<>();
-        for (int i = nodes.size() - 1; i >= 0; i--) {
-            Node node = nodes.get(i);
-            Node root = getRootNode(node);
-            if (root == null || processedRoots.contains(root)) {
-                continue;
-            }
-            processedRoots.add(root);
-            if (!intersectsViewport(cachedHierarchyBounds.get(root))) {
-                continue;
-            }
-            Node hit = findNodeInHierarchyAt(root, worldX, worldY);
+        long startNanos = System.nanoTime();
+        List<Node> visibleRoots = getVisibleRootsForViewport();
+        int rootCount = visibleRoots.size();
+        Node hit = null;
+        for (int i = visibleRoots.size() - 1; i >= 0; i--) {
+            Node root = visibleRoots.get(i);
+            hit = findNodeInHierarchyAt(root, worldX, worldY);
             if (hit != null) {
-                return hit;
+                break;
             }
         }
-        return null;
+        long duration = System.nanoTime() - startNanos;
+        profilerHitTestTotalNanos += duration;
+        profilerHitTestCallCount++;
+        profilerHitTestTotalRoots += rootCount;
+        profilerHitTestAvgMs = (profilerHitTestTotalNanos / (double) profilerHitTestCallCount) / 1_000_000.0;
+        profilerHitTestAvgRoots = profilerHitTestTotalRoots / (double) profilerHitTestCallCount;
+        return hit;
     }
 
     private Node findNodeInHierarchyAt(Node node, int worldX, int worldY) {
@@ -905,6 +937,33 @@ public class NodeGraph {
         }
 
         return null;
+    }
+
+    private boolean updateHoveredSocketInHierarchy(Node node, int worldMouseX, int worldMouseY, boolean inputsOnly, boolean outputsOnly) {
+        if (node == null) {
+            return false;
+        }
+
+        Map<Integer, Node> parameterMap = node.getAttachedParameters();
+        if (parameterMap != null && !parameterMap.isEmpty()) {
+            List<Integer> keys = new ArrayList<>(parameterMap.keySet());
+            keys.sort(Collections.reverseOrder());
+            for (Integer key : keys) {
+                if (updateHoveredSocketInHierarchy(parameterMap.get(key), worldMouseX, worldMouseY, inputsOnly, outputsOnly)) {
+                    return true;
+                }
+            }
+        }
+
+        if (updateHoveredSocketInHierarchy(node.getAttachedSensor(), worldMouseX, worldMouseY, inputsOnly, outputsOnly)) {
+            return true;
+        }
+
+        if (updateHoveredSocketInHierarchy(node.getAttachedActionNode(), worldMouseX, worldMouseY, inputsOnly, outputsOnly)) {
+            return true;
+        }
+
+        return updateHoveredSocketForNode(node, worldMouseX, worldMouseY, inputsOnly, outputsOnly);
     }
 
     private boolean isNodeHitAt(Node node, int worldX, int worldY) {
@@ -996,6 +1055,7 @@ public class NodeGraph {
 
     private void invalidateHierarchyCache() {
         hierarchyGeometryDirty = true;
+        visibleRootsDirty = true;
     }
 
     private void invalidateConnectionIndex() {
@@ -1005,6 +1065,10 @@ public class NodeGraph {
     private void invalidateRenderCaches() {
         invalidateHierarchyCache();
         invalidateConnectionIndex();
+        trimmedTextCache.clear();
+        parameterLayoutCache.clear();
+        runtimeVariableNamesFrameCache.clear();
+        cachedBaseRuntimeVariableNames = null;
     }
 
     private void rebuildHierarchyCacheIfNeeded() {
@@ -1017,6 +1081,38 @@ public class NodeGraph {
             cachedHierarchyNodeCounts
         );
         hierarchyGeometryDirty = false;
+    }
+
+    private List<Node> getVisibleRootsForViewport() {
+        rebuildHierarchyCacheIfNeeded();
+
+        int viewportWidth = getViewportWorldWidth();
+        int viewportHeight = getViewportWorldHeight();
+        if (!visibleRootsDirty
+            && visibleRootsCameraX == cameraX
+            && visibleRootsCameraY == cameraY
+            && visibleRootsViewportWidth == viewportWidth
+            && visibleRootsViewportHeight == viewportHeight) {
+            return cachedVisibleRootNodes;
+        }
+
+        cachedVisibleRootNodes.clear();
+        cachedVisibleNodeCount = 0;
+        for (Node root : cachedRootNodes) {
+            SelectionBounds bounds = cachedHierarchyBounds.get(root);
+            if (!intersectsViewport(bounds, viewportWidth, viewportHeight)) {
+                continue;
+            }
+            cachedVisibleRootNodes.add(root);
+            cachedVisibleNodeCount += cachedHierarchyNodeCounts.getOrDefault(root, 0);
+        }
+
+        visibleRootsDirty = false;
+        visibleRootsCameraX = cameraX;
+        visibleRootsCameraY = cameraY;
+        visibleRootsViewportWidth = viewportWidth;
+        visibleRootsViewportHeight = viewportHeight;
+        return cachedVisibleRootNodes;
     }
 
     private void rebuildConnectionIndexIfNeeded() {
@@ -1066,11 +1162,13 @@ public class NodeGraph {
     }
 
     private boolean intersectsViewport(SelectionBounds bounds) {
+        return intersectsViewport(bounds, getViewportWorldWidth(), getViewportWorldHeight());
+    }
+
+    private boolean intersectsViewport(SelectionBounds bounds, int viewportWidth, int viewportHeight) {
         if (bounds == null) {
             return false;
         }
-        int viewportWidth = getViewportWorldWidth();
-        int viewportHeight = getViewportWorldHeight();
         if (viewportWidth <= 0 || viewportHeight <= 0) {
             return true;
         }
@@ -1169,19 +1267,21 @@ public class NodeGraph {
     }
 
     public void beginSelectionBox(int screenX, int screenY) {
+        int worldX = screenToWorldX(screenX);
+        int worldY = screenToWorldY(screenY);
         selectionBoxActive = true;
-        selectionBoxStartX = screenX;
-        selectionBoxStartY = screenY;
-        selectionBoxCurrentX = screenX;
-        selectionBoxCurrentY = screenY;
+        selectionBoxStartWorldX = worldX;
+        selectionBoxStartWorldY = worldY;
+        selectionBoxCurrentWorldX = worldX;
+        selectionBoxCurrentWorldY = worldY;
     }
 
     public void updateSelectionBox(int screenX, int screenY) {
         if (!selectionBoxActive) {
             return;
         }
-        selectionBoxCurrentX = screenX;
-        selectionBoxCurrentY = screenY;
+        selectionBoxCurrentWorldX = screenToWorldX(screenX);
+        selectionBoxCurrentWorldY = screenToWorldY(screenY);
         if (hasSelectionBoxDrag()) {
             applySelectionBoxSelection();
         }
@@ -1202,20 +1302,20 @@ public class NodeGraph {
     }
 
     private boolean hasSelectionBoxDrag() {
-        int deltaX = Math.abs(selectionBoxCurrentX - selectionBoxStartX);
-        int deltaY = Math.abs(selectionBoxCurrentY - selectionBoxStartY);
+        float scale = getZoomScale();
+        if (scale == 0.0f) {
+            scale = 1.0f;
+        }
+        int deltaX = Math.round(Math.abs(selectionBoxCurrentWorldX - selectionBoxStartWorldX) * scale);
+        int deltaY = Math.round(Math.abs(selectionBoxCurrentWorldY - selectionBoxStartWorldY) * scale);
         return deltaX >= SELECTION_BOX_MIN_DRAG || deltaY >= SELECTION_BOX_MIN_DRAG;
     }
 
     private void applySelectionBoxSelection() {
-        int left = Math.min(selectionBoxStartX, selectionBoxCurrentX);
-        int right = Math.max(selectionBoxStartX, selectionBoxCurrentX);
-        int top = Math.min(selectionBoxStartY, selectionBoxCurrentY);
-        int bottom = Math.max(selectionBoxStartY, selectionBoxCurrentY);
-        int worldLeft = screenToWorldX(left);
-        int worldRight = screenToWorldX(right);
-        int worldTop = screenToWorldY(top);
-        int worldBottom = screenToWorldY(bottom);
+        int worldLeft = Math.min(selectionBoxStartWorldX, selectionBoxCurrentWorldX);
+        int worldRight = Math.max(selectionBoxStartWorldX, selectionBoxCurrentWorldX);
+        int worldTop = Math.min(selectionBoxStartWorldY, selectionBoxCurrentWorldY);
+        int worldBottom = Math.max(selectionBoxStartWorldY, selectionBoxCurrentWorldY);
 
         List<Node> inside = new ArrayList<>();
         for (Node node : nodes) {
@@ -1963,7 +2063,8 @@ public class NodeGraph {
     }
     
     public void updateMouseHover(int mouseX, int mouseY) {
-        rebuildHierarchyCacheIfNeeded();
+        long startNanos = System.nanoTime();
+        List<Node> visibleRoots = getVisibleRootsForViewport();
         // Reset hover state
         hoveredSocketNode = null;
         hoveredSocketIndex = -1;
@@ -1971,19 +2072,17 @@ public class NodeGraph {
         hoveredStartNode = null;
 
         // Check for start button hover
-        for (Node node : nodes) {
-            if (!intersectsViewport(node)) {
-                continue;
-            }
-            if (node.getType() == NodeType.START && isMouseOverStartButton(node, mouseX, mouseY)) {
+        for (Node root : visibleRoots) {
+            if (root.getType() == NodeType.START && isMouseOverStartButton(root, mouseX, mouseY)) {
                 hoveringStartButton = true;
-                hoveredStartNode = node;
+                hoveredStartNode = root;
                 break;
             }
         }
         
         // Don't check for socket hover if we're currently dragging a connection
         if (isDraggingConnection) {
+            profilerHoverMs = (System.nanoTime() - startNanos) / 1_000_000.0;
             return;
         }
 
@@ -1999,15 +2098,14 @@ public class NodeGraph {
                 }
             }
         } else {
-            for (Node node : nodes) {
-                if (!intersectsViewport(node)) {
-                    continue;
-                }
-                if (updateHoveredSocketForNode(node, worldMouseX, worldMouseY, false, false)) {
+            for (int i = visibleRoots.size() - 1; i >= 0; i--) {
+                if (updateHoveredSocketInHierarchy(visibleRoots.get(i), worldMouseX, worldMouseY, false, false)) {
+                    profilerHoverMs = (System.nanoTime() - startNanos) / 1_000_000.0;
                     return;
                 }
             }
         }
+        profilerHoverMs = (System.nanoTime() - startNanos) / 1_000_000.0;
     }
 
     public void stopDragging() {
@@ -2310,7 +2408,12 @@ public class NodeGraph {
     }
     
     public boolean isAnyNodeBeingDragged() {
-        return draggingNode != null || isDraggingConnection || connectionCutActive;
+        return draggingNode != null || resizingStickyNote != null || isDraggingConnection || connectionCutActive;
+    }
+
+    private boolean isLowDetailModeEnabled() {
+        SettingsManager.Settings settings = SettingsManager.getCurrent();
+        return settings != null && Boolean.TRUE.equals(settings.lowDetailMode);
     }
 
     public void startPanning(int mouseX, int mouseY) {
@@ -2972,6 +3075,7 @@ public class NodeGraph {
     }
 
     public void render(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY, float delta, boolean onlyDragged) {
+        long totalStartNanos = !onlyDragged ? System.nanoTime() : 0L;
         flushDeferredStickyNoteSaveIfDue();
         var matrices = context.getMatrices();
         MatrixStackBridge.push(matrices);
@@ -2984,41 +3088,53 @@ public class NodeGraph {
         if (!onlyDragged) {
             updateCascadeDeletionPreview();
         }
-        rebuildHierarchyCacheIfNeeded();
-        visibleNodeCountForFrame = 0;
-        for (Node root : cachedRootNodes) {
-            if (intersectsViewport(cachedHierarchyBounds.get(root))) {
-                visibleNodeCountForFrame += cachedHierarchyNodeCounts.getOrDefault(root, 0);
-            }
+        List<Node> visibleRoots = getVisibleRootsForViewport();
+        visibleNodeCountForFrame = cachedVisibleNodeCount;
+        if (!onlyDragged) {
+            profilerVisibleRoots = visibleRoots.size();
+            profilerVisibleNodes = cachedVisibleNodeCount;
         }
-        denseViewportMode = visibleNodeCountForFrame >= DENSE_VIEW_VISIBLE_NODE_THRESHOLD;
+        if (!onlyDragged) {
+            runtimeVariableNamesFrameCache.clear();
+        }
+        compactViewportMode = isLowDetailModeEnabled();
+        denseViewportMode = false;
         boolean renderConnectionsOnTop = shouldRenderConnectionsOnTop();
+        int drawnConnections = 0;
         if (!renderConnectionsOnTop) {
-            renderConnections(context, onlyDragged);
+            drawnConnections += renderConnections(context, onlyDragged, !onlyDragged);
         }
 
         Set<Node> renderedNodes = new HashSet<>();
+        long nodesStartNanos = !onlyDragged ? System.nanoTime() : 0L;
 
-        for (Node root : cachedRootNodes) {
-            if (!intersectsViewport(cachedHierarchyBounds.get(root))) {
-                markHierarchyRendered(root, renderedNodes);
-                continue;
-            }
+        for (Node root : visibleRoots) {
             renderHierarchy(root, context, textRenderer, mouseX, mouseY, delta, onlyDragged, false, renderedNodes);
         }
+        if (!onlyDragged) {
+            profilerNodeMs = (System.nanoTime() - nodesStartNanos) / 1_000_000.0;
+            profilerDrawnNodes = renderedNodes.size();
+        }
 
+        long dropdownStartNanos = !onlyDragged ? System.nanoTime() : 0L;
         if (!onlyDragged) {
             renderParameterDropdownList(context, textRenderer, mouseX, mouseY);
             renderRandomRoundingDropdownList(context, textRenderer, mouseX, mouseY);
             renderModeDropdownList(context, textRenderer, mouseX, mouseY);
             renderAmountSignDropdownList(context, textRenderer, mouseX, mouseY);
+            profilerDropdownMs = (System.nanoTime() - dropdownStartNanos) / 1_000_000.0;
         }
 
         if (renderConnectionsOnTop) {
-            renderConnections(context, onlyDragged);
+            drawnConnections += renderConnections(context, onlyDragged, !onlyDragged);
+        }
+        if (!onlyDragged) {
+            profilerDrawnConnections = drawnConnections;
+            profilerRenderMs = (System.nanoTime() - totalStartNanos) / 1_000_000.0;
         }
 
         MatrixStackBridge.pop(matrices);
+        compactViewportMode = false;
         denseViewportMode = false;
         visibleNodeCountForFrame = 0;
     }
@@ -3026,6 +3142,65 @@ public class NodeGraph {
     private boolean shouldRenderConnectionsOnTop() {
         SettingsManager.Settings settings = SettingsManager.getCurrent();
         return settings != null && Boolean.TRUE.equals(settings.renderConnectionsOnTop);
+    }
+
+    public PerformanceSnapshot getPerformanceSnapshot() {
+        return new PerformanceSnapshot(
+            profilerRenderMs,
+            profilerNodeMs,
+            profilerConnectionMs,
+            profilerDropdownMs,
+            profilerHoverMs,
+            profilerHitTestAvgMs,
+            profilerHitTestAvgRoots,
+            profilerVisibleNodes,
+            profilerDrawnNodes,
+            profilerVisibleRoots,
+            profilerDrawnConnections
+        );
+    }
+
+    public void renderProfilerOverlay(DrawContext context, TextRenderer textRenderer) {
+        PerformanceSnapshot snapshot = getPerformanceSnapshot();
+        List<String> lines = List.of(
+            String.format(Locale.ROOT, "render %.2f ms", snapshot.renderMs()),
+            String.format(Locale.ROOT, "nodes %.2f ms (%d visible, %d drawn, %d roots)", snapshot.nodeMs(), snapshot.visibleNodes(), snapshot.drawnNodes(), snapshot.visibleRoots()),
+            String.format(Locale.ROOT, "connections %.2f ms (%d drawn)", snapshot.connectionMs(), snapshot.drawnConnections()),
+            String.format(Locale.ROOT, "dropdowns %.2f ms", snapshot.dropdownMs()),
+            String.format(Locale.ROOT, "hover %.2f ms", snapshot.hoverMs()),
+            String.format(Locale.ROOT, "hit-test %.2f ms (%.1f roots/call)", snapshot.hitTestAvgMs(), snapshot.hitTestAvgRoots())
+        );
+        int maxWidth = 0;
+        for (String line : lines) {
+            maxWidth = Math.max(maxWidth, textRenderer.getWidth(line));
+        }
+        int lineHeight = textRenderer.fontHeight + 2;
+        int overlayWidth = maxWidth + PROFILER_OVERLAY_PADDING * 2;
+        int overlayHeight = lines.size() * lineHeight + PROFILER_OVERLAY_PADDING * 2;
+        int overlayX = PROFILER_OVERLAY_MARGIN;
+        int overlayY = PROFILER_OVERLAY_MARGIN;
+        context.fill(overlayX, overlayY, overlayX + overlayWidth, overlayY + overlayHeight, 0xD0101010);
+        DrawContextBridge.drawBorder(context, overlayX, overlayY, overlayWidth, overlayHeight, 0xFF505050);
+        int textY = overlayY + PROFILER_OVERLAY_PADDING;
+        for (String line : lines) {
+            context.drawTextWithShadow(textRenderer, Text.literal(line), overlayX + PROFILER_OVERLAY_PADDING, textY, 0xFFFFFFFF);
+            textY += lineHeight;
+        }
+    }
+
+    public record PerformanceSnapshot(
+        double renderMs,
+        double nodeMs,
+        double connectionMs,
+        double dropdownMs,
+        double hoverMs,
+        double hitTestAvgMs,
+        double hitTestAvgRoots,
+        int visibleNodes,
+        int drawnNodes,
+        int visibleRoots,
+        int drawnConnections
+    ) {
     }
 
     public void renderScreenCoordinateCaptureOverlay(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY) {
@@ -3077,10 +3252,10 @@ public class NodeGraph {
         if (!selectionBoxActive || !hasSelectionBoxDrag()) {
             return;
         }
-        int left = Math.min(selectionBoxStartX, selectionBoxCurrentX);
-        int right = Math.max(selectionBoxStartX, selectionBoxCurrentX);
-        int top = Math.min(selectionBoxStartY, selectionBoxCurrentY);
-        int bottom = Math.max(selectionBoxStartY, selectionBoxCurrentY);
+        int left = worldToScreenX(Math.min(selectionBoxStartWorldX, selectionBoxCurrentWorldX));
+        int right = worldToScreenX(Math.max(selectionBoxStartWorldX, selectionBoxCurrentWorldX));
+        int top = worldToScreenY(Math.min(selectionBoxStartWorldY, selectionBoxCurrentWorldY));
+        int bottom = worldToScreenY(Math.max(selectionBoxStartWorldY, selectionBoxCurrentWorldY));
         if (left == right || top == bottom) {
             return;
         }
@@ -3206,6 +3381,7 @@ public class NodeGraph {
             && node.getType() != NodeType.OPERATOR_MOD
             && node.getType() != NodeType.PARAM_DURATION
             && node.getType() != NodeType.SENSOR_POSITION_OF
+            && node.getType() != NodeType.SENSOR_LOOK_DIRECTION
             && node.getType() != NodeType.SENSOR_DISTANCE_BETWEEN
             && node.getType() != NodeType.SENSOR_SLOT_ITEM_COUNT;
     }
@@ -3214,7 +3390,7 @@ public class NodeGraph {
         if (node == null || !node.shouldRenderSockets()) {
             return false;
         }
-        if (!denseViewportMode) {
+        if (!denseViewportMode && !compactViewportMode) {
             return true;
         }
         return node.isSelected()
@@ -3222,6 +3398,10 @@ public class NodeGraph {
             || node == connectionSourceNode
             || node == hoveredSocketNode
             || node == hoveredNode;
+    }
+
+    private boolean shouldUseCompactNodeContent(Node node) {
+        return false;
     }
 
     private void renderNode(DrawContext context, TextRenderer textRenderer, Node node, int mouseX, int mouseY, float delta) {
@@ -3242,6 +3422,7 @@ public class NodeGraph {
         NodeStyle nodeStyle = getNodeStyle(node);
         boolean simpleStyle = nodeStyle == NodeStyle.MINIMAL;
         boolean isStopControl = node.isStopControlNode();
+        boolean lowDetail = compactViewportMode;
 
         // Node background
         int bgColor = node.isSelected() ? UITheme.BACKGROUND_TERTIARY : UITheme.BACKGROUND_SECONDARY;
@@ -3251,7 +3432,9 @@ public class NodeGraph {
         context.fill(x, y, x + width, y + height, bgColor);
         if (simpleStyle) {
             int tabColor;
-            if (isStopControl) {
+            if (lowDetail) {
+                tabColor = isOverSidebar ? UITheme.BACKGROUND_TERTIARY : UITheme.BACKGROUND_SECTION;
+            } else if (isStopControl) {
                 tabColor = isOverSidebar ? toGrayscale(UITheme.NODE_STOP_BG, 0.7f) : UITheme.NODE_STOP_BG;
             } else {
                 int baseColor = node.getType().getColor();
@@ -3269,6 +3452,8 @@ public class NodeGraph {
             borderColor = UITheme.BORDER_DRAGGING; // Medium grey outline when dragging
         } else if (node.isSelected()) {
             borderColor = getSelectedNodeAccentColor();
+        } else if (lowDetail) {
+            borderColor = UITheme.BORDER_SUBTLE;
         } else if (node.getType() == NodeType.START) {
             borderColor = isOverSidebar ? toGrayscale(UITheme.NODE_START_BORDER, 0.75f) : UITheme.NODE_START_BORDER; // Darker green for START
         } else if (node.getType() == NodeType.EVENT_FUNCTION) {
@@ -3333,14 +3518,16 @@ public class NodeGraph {
             && node.getType() != NodeType.OPERATOR_BOOLEAN_OR
             && node.getType() != NodeType.OPERATOR_BOOLEAN_AND
             && node.getType() != NodeType.OPERATOR_BOOLEAN_XOR) {
-            int headerColor = node.getType().getColor() & UITheme.NODE_HEADER_ALPHA_MASK;
-            if (isOverSidebar) {
-                headerColor = UITheme.NODE_HEADER_DIMMED; // Grey header when over sidebar
+            if (!lowDetail) {
+                int headerColor = node.getType().getColor() & UITheme.NODE_HEADER_ALPHA_MASK;
+                if (isOverSidebar) {
+                    headerColor = UITheme.NODE_HEADER_DIMMED; // Grey header when over sidebar
+                }
+                context.fill(x + 1, y + 1, x + width - 1, y + 14, headerColor);
             }
-            context.fill(x + 1, y + 1, x + width - 1, y + 14, headerColor);
             
             // Node title
-            int titleColor = isOverSidebar ? UITheme.TEXT_TERTIARY : UITheme.TEXT_PRIMARY; // Grey text when over sidebar
+            int titleColor = isOverSidebar ? UITheme.TEXT_TERTIARY : (lowDetail ? UITheme.TEXT_SECONDARY : UITheme.TEXT_PRIMARY);
             drawNodeText(
                 context,
                 textRenderer,
@@ -3356,9 +3543,16 @@ public class NodeGraph {
             for (int i = 0; i < node.getInputSocketCount(); i++) {
                 boolean isHovered = (hoveredSocketNode == node && hoveredSocketIndex == i && hoveredSocketIsInput);
                 boolean isActive = isSocketActive(node, i, true);
-                int socketColor = isHovered ? getSelectedNodeAccentColor() : node.getType().getColor();
-                if (!isActive && !isHovered) {
-                    socketColor = darkenColor(socketColor, 0.7f); // Darker when unused
+                int socketColor;
+                if (lowDetail && !isOverSidebar) {
+                    socketColor = isHovered
+                        ? getSelectedNodeAccentColor()
+                        : (isActive ? UITheme.BORDER_DEFAULT : UITheme.BORDER_SUBTLE);
+                } else {
+                    socketColor = isHovered ? getSelectedNodeAccentColor() : node.getType().getColor();
+                    if (!isActive && !isHovered) {
+                        socketColor = darkenColor(socketColor, 0.7f); // Darker when unused
+                    }
                 }
                 if (isOverSidebar) {
                     socketColor = UITheme.BORDER_HIGHLIGHT; // Grey sockets when over sidebar
@@ -3370,9 +3564,16 @@ public class NodeGraph {
             for (int i = 0; i < node.getOutputSocketCount(); i++) {
                 boolean isHovered = (hoveredSocketNode == node && hoveredSocketIndex == i && !hoveredSocketIsInput);
                 boolean isActive = isSocketActive(node, i, false);
-                int socketColor = isHovered ? getSelectedNodeAccentColor() : node.getOutputSocketColor(i);
-                if (!isActive && !isHovered) {
-                    socketColor = darkenColor(socketColor, 0.7f); // Darker when unused
+                int socketColor;
+                if (lowDetail && !isOverSidebar) {
+                    socketColor = isHovered
+                        ? getSelectedNodeAccentColor()
+                        : (isActive ? UITheme.BORDER_DEFAULT : UITheme.BORDER_SUBTLE);
+                } else {
+                    socketColor = isHovered ? getSelectedNodeAccentColor() : node.getOutputSocketColor(i);
+                    if (!isActive && !isHovered) {
+                        socketColor = darkenColor(socketColor, 0.7f); // Darker when unused
+                    }
                 }
                 if (isOverSidebar) {
                     socketColor = UITheme.BORDER_HIGHLIGHT; // Grey sockets when over sidebar
@@ -3381,10 +3582,16 @@ public class NodeGraph {
             }
         }
 
+        if (shouldUseCompactNodeContent(node)) {
+            return;
+        }
+
         // Render node content based on type
         if (node.getType() == NodeType.START) {
             // START node - green square with play button
-            int greenColor = isOverSidebar ? toGrayscale(UITheme.NODE_START_BG, 0.7f) : UITheme.NODE_START_BG; // Darker green when over sidebar
+            int greenColor = lowDetail
+                ? (isOverSidebar ? UITheme.NODE_DIMMED_BG : UITheme.BACKGROUND_SECTION)
+                : (isOverSidebar ? toGrayscale(UITheme.NODE_START_BG, 0.7f) : UITheme.NODE_START_BG);
             context.fill(x + 1, y + 1, x + width - 1, y + height - 1, greenColor);
             
             // Draw play button (triangle pointing right) - with hover effect
@@ -3415,10 +3622,14 @@ public class NodeGraph {
             renderStartNodeNumber(context, textRenderer, node, x, y, isOverSidebar);
             
         } else if (node.getType() == NodeType.EVENT_FUNCTION) {
-            int baseColor = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_BG, 0.7f) : UITheme.NODE_EVENT_BG;
+            int baseColor = lowDetail
+                ? (isOverSidebar ? UITheme.NODE_DIMMED_BG : UITheme.BACKGROUND_SECTION)
+                : (isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_BG, 0.7f) : UITheme.NODE_EVENT_BG);
             context.fill(x + 1, y + 1, x + width - 1, y + height - 1, baseColor);
 
-            int titleColor = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_TITLE, 0.9f) : UITheme.NODE_EVENT_TITLE;
+            int titleColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_TITLE, 0.9f)
+                : (lowDetail ? UITheme.TEXT_SECONDARY : UITheme.NODE_EVENT_TITLE);
             drawNodeText(
                 context,
                 textRenderer,
@@ -3434,9 +3645,13 @@ public class NodeGraph {
             int boxHeight = node.getEventNameFieldHeight();
             int boxRight = boxLeft + boxWidth;
             int boxBottom = boxTop + boxHeight;
-            int inputBackground = isOverSidebar ? UITheme.NODE_INPUT_BG_DIMMED : UITheme.BACKGROUND_INPUT;
+            int inputBackground = isOverSidebar
+                ? UITheme.NODE_INPUT_BG_DIMMED
+                : (lowDetail ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_INPUT);
             context.fill(boxLeft, boxTop, boxRight, boxBottom, inputBackground);
-            int inputBorder = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_INPUT_BORDER, 0.8f) : UITheme.BORDER_SUBTLE;
+            int inputBorder = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_INPUT_BORDER, 0.8f)
+                : (lowDetail ? UITheme.BORDER_DEFAULT : UITheme.BORDER_SUBTLE);
             DrawContextBridge.drawBorderInLayer(context, boxLeft, boxTop, boxRight - boxLeft, boxHeight, inputBorder);
 
             boolean editingEventName = isEditingEventNameField() && eventNameEditingNode == node;
@@ -3476,7 +3691,9 @@ public class NodeGraph {
                 }
             }
             int textY = boxTop + (boxHeight - textRenderer.fontHeight) / 2 + 1;
-            int textColor = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_TEXT, 0.85f) : UITheme.NODE_EVENT_TEXT;
+            int textColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_TEXT, 0.85f)
+                : (lowDetail ? UITheme.TEXT_PRIMARY : UITheme.NODE_EVENT_TEXT);
             if (showPlaceholder) {
                 textColor = UITheme.TEXT_TERTIARY;
             }
@@ -3526,10 +3743,14 @@ public class NodeGraph {
             }
             renderPopupEditButton(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
         } else if (node.getType() == NodeType.VARIABLE) {
-            int baseColor = isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_BG, 0.7f) : UITheme.NODE_VARIABLE_BG;
+            int baseColor = lowDetail
+                ? (isOverSidebar ? UITheme.NODE_DIMMED_BG : UITheme.BACKGROUND_SECTION)
+                : (isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_BG, 0.7f) : UITheme.NODE_VARIABLE_BG);
             context.fill(x + 1, y + 1, x + width - 1, y + height - 1, baseColor);
 
-            int titleColor = isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_TITLE, 0.9f) : UITheme.NODE_VARIABLE_TITLE;
+            int titleColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_VARIABLE_TITLE, 0.9f)
+                : (lowDetail ? UITheme.TEXT_SECONDARY : UITheme.NODE_VARIABLE_TITLE);
             drawNodeText(
                 context,
                 textRenderer,
@@ -3550,8 +3771,12 @@ public class NodeGraph {
             if (editingThis) {
                 updateParameterCaretBlink();
             }
-            int inputBackground = isOverSidebar ? UITheme.NODE_INPUT_BG_DIMMED : UITheme.BACKGROUND_INPUT;
-            int inputBorder = isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_INPUT_BORDER, 0.8f) : UITheme.BORDER_SUBTLE;
+            int inputBackground = isOverSidebar
+                ? UITheme.NODE_INPUT_BG_DIMMED
+                : (lowDetail ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_INPUT);
+            int inputBorder = isOverSidebar
+                ? toGrayscale(UITheme.NODE_VARIABLE_INPUT_BORDER, 0.8f)
+                : (lowDetail ? UITheme.BORDER_DEFAULT : UITheme.BORDER_SUBTLE);
             if (editingThis) {
                 inputBorder = getSelectedNodeAccentColor();
             }
@@ -3577,7 +3802,7 @@ public class NodeGraph {
             int textY = boxTop + (boxHeight - textRenderer.fontHeight) / 2 + 1;
             int textColor = editingThis
                 ? UITheme.TEXT_EDITING
-                : (isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_TEXT, 0.85f) : UITheme.NODE_VARIABLE_TEXT);
+                : (isOverSidebar ? toGrayscale(UITheme.NODE_VARIABLE_TEXT, 0.85f) : (lowDetail ? UITheme.TEXT_PRIMARY : UITheme.NODE_VARIABLE_TEXT));
             if (editingThis && hasParameterSelection()) {
                 int start = MathHelper.clamp(parameterSelectionStart, 0, display.length());
                 int end = MathHelper.clamp(parameterSelectionEnd, 0, display.length());
@@ -3604,7 +3829,9 @@ public class NodeGraph {
             }
         } else if (!simpleStyle && isComparisonOperator(node)) {
             int accentColor = node.getType().getColor();
-            int baseColor = isOverSidebar ? toGrayscale(accentColor, 0.7f) : adjustColorBrightness(accentColor, 0.55f);
+            int baseColor = lowDetail
+                ? (isOverSidebar ? UITheme.NODE_DIMMED_BG : UITheme.BACKGROUND_SECTION)
+                : (isOverSidebar ? toGrayscale(accentColor, 0.7f) : adjustColorBrightness(accentColor, 0.55f));
             context.fill(x + 1, y + 1, x + width - 1, y + height - 1, baseColor);
 
             int titleColor = isOverSidebar ? toGrayscale(UITheme.TEXT_LABEL, 0.9f) : UITheme.TEXT_PRIMARY;
@@ -3630,7 +3857,9 @@ public class NodeGraph {
             int rightCenterY = rightSlotTop + rightSlotHeight / 2;
             int operatorCenterY = (leftCenterY + rightCenterY) / 2;
             int operatorY = operatorCenterY - textRenderer.fontHeight / 2;
-            int operatorColor = isOverSidebar ? toGrayscale(UITheme.NODE_OPERATOR_SYMBOL, 0.85f) : UITheme.NODE_OPERATOR_SYMBOL;
+            int operatorColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_OPERATOR_SYMBOL, 0.85f)
+                : (lowDetail ? UITheme.TEXT_SECONDARY : UITheme.NODE_OPERATOR_SYMBOL);
             if (node.getType() == NodeType.OPERATOR_GREATER || node.getType() == NodeType.OPERATOR_LESS) {
                 int buttonPaddingX = 3;
                 int buttonPaddingY = 4;
@@ -3639,7 +3868,9 @@ public class NodeGraph {
                 int buttonHeight = textRenderer.fontHeight + buttonPaddingY * 2;
                 int buttonLeft = gapCenterX - buttonWidth / 2;
                 int buttonTop = operatorY - buttonPaddingY;
-                int buttonFill = isOverSidebar ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_TERTIARY;
+                int buttonFill = isOverSidebar
+                    ? UITheme.BACKGROUND_SECONDARY
+                    : (lowDetail ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_TERTIARY);
                 int buttonBorder = isOverSidebar ? UITheme.BORDER_SUBTLE : UITheme.BORDER_DEFAULT;
                 context.fill(buttonLeft, buttonTop, buttonLeft + buttonWidth, buttonTop + buttonHeight, buttonFill);
                 DrawContextBridge.drawBorderInLayer(context, buttonLeft, buttonTop, buttonWidth, buttonHeight, buttonBorder);
@@ -3654,10 +3885,14 @@ public class NodeGraph {
                 operatorColor
             );
         } else if (node.getType() == NodeType.EVENT_CALL) {
-            int baseColor = isOverSidebar ? toGrayscale(node.getType().getColor(), 0.7f) : node.getType().getColor();
+            int baseColor = lowDetail
+                ? (isOverSidebar ? UITheme.NODE_DIMMED_BG : UITheme.BACKGROUND_SECTION)
+                : (isOverSidebar ? toGrayscale(node.getType().getColor(), 0.7f) : node.getType().getColor());
             context.fill(x + 1, y + 1, x + width - 1, y + height - 1, baseColor);
 
-            int titleColor = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_TITLE, 0.9f) : UITheme.NODE_EVENT_TITLE;
+            int titleColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_TITLE, 0.9f)
+                : (lowDetail ? UITheme.TEXT_SECONDARY : UITheme.NODE_EVENT_TITLE);
             drawNodeText(
                 context,
                 textRenderer,
@@ -3673,9 +3908,13 @@ public class NodeGraph {
             int boxHeight = node.getEventNameFieldHeight();
             int boxRight = boxLeft + boxWidth;
             int boxBottom = boxTop + boxHeight;
-            int inputBackground = isOverSidebar ? UITheme.NODE_INPUT_BG_DIMMED : UITheme.BACKGROUND_INPUT;
+            int inputBackground = isOverSidebar
+                ? UITheme.NODE_INPUT_BG_DIMMED
+                : (lowDetail ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_INPUT);
             context.fill(boxLeft, boxTop, boxRight, boxBottom, inputBackground);
-            int inputBorder = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_CALL_INPUT_BORDER, 0.8f) : UITheme.BORDER_SUBTLE;
+            int inputBorder = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_CALL_INPUT_BORDER, 0.8f)
+                : (lowDetail ? UITheme.BORDER_DEFAULT : UITheme.BORDER_SUBTLE);
             DrawContextBridge.drawBorderInLayer(context, boxLeft, boxTop, boxRight - boxLeft, boxHeight, inputBorder);
 
             boolean editingEventName = isEditingEventNameField() && eventNameEditingNode == node;
@@ -3698,7 +3937,9 @@ public class NodeGraph {
                 display = value;
             }
             int textY = boxTop + (boxHeight - textRenderer.fontHeight) / 2 + 1;
-            int textColor = isOverSidebar ? toGrayscale(UITheme.NODE_EVENT_TEXT, 0.85f) : UITheme.NODE_EVENT_TEXT;
+            int textColor = isOverSidebar
+                ? toGrayscale(UITheme.NODE_EVENT_TEXT, 0.85f)
+                : (lowDetail ? UITheme.TEXT_PRIMARY : UITheme.NODE_EVENT_TEXT);
             if (showPlaceholder) {
                 textColor = UITheme.TEXT_TERTIARY;
             }
@@ -3990,12 +4231,23 @@ public class NodeGraph {
                             hovered,
                             editingThis || inlineDropdownOpen
                         );
-                        int backgroundColor = isOverSidebar
-                            ? fieldBackground
-                            : AnimationHelper.lerpColor(fieldBackground, activeFieldBackground, progress);
-                        int parameterFieldBorderColor = isOverSidebar
-                            ? fieldBorder
-                            : AnimationHelper.lerpColor(fieldBorder, activeFieldBorder, progress);
+                        int backgroundColor;
+                        int parameterFieldBorderColor;
+                        if (compactViewportMode && !isOverSidebar) {
+                            backgroundColor = editingThis || inlineDropdownOpen
+                                ? UITheme.BACKGROUND_INPUT
+                                : UITheme.BACKGROUND_SECONDARY;
+                            parameterFieldBorderColor = editingThis || inlineDropdownOpen
+                                ? getSelectedNodeAccentColor()
+                                : UITheme.BORDER_DEFAULT;
+                        } else {
+                            backgroundColor = isOverSidebar
+                                ? fieldBackground
+                                : AnimationHelper.lerpColor(fieldBackground, activeFieldBackground, progress);
+                            parameterFieldBorderColor = isOverSidebar
+                                ? fieldBorder
+                                : AnimationHelper.lerpColor(fieldBorder, activeFieldBorder, progress);
+                        }
                         if (inlineDropdownOpen && !isOverSidebar) {
                             parameterFieldBorderColor = getSelectedNodeAccentColor();
                         }
@@ -4003,10 +4255,12 @@ public class NodeGraph {
                         context.fill(fieldLeft, fieldTop, fieldRight, fieldTop + fieldHeight, backgroundColor);
                         DrawContextBridge.drawBorderInLayer(context, fieldLeft, fieldTop, fieldWidth, fieldHeight, parameterFieldBorderColor);
 
-                        labelColor = isOverSidebar ? labelColor
-                            : AnimationHelper.lerpColor(labelColor, UITheme.TEXT_HEADER, progress * 0.6f);
-                        valueColor = isOverSidebar ? valueColor
-                            : AnimationHelper.lerpColor(valueColor, UITheme.TEXT_HEADER, progress);
+                        if (!compactViewportMode || isOverSidebar) {
+                            labelColor = isOverSidebar ? labelColor
+                                : AnimationHelper.lerpColor(labelColor, UITheme.TEXT_HEADER, progress * 0.6f);
+                            valueColor = isOverSidebar ? valueColor
+                                : AnimationHelper.lerpColor(valueColor, UITheme.TEXT_HEADER, progress);
+                        }
                         if (!labelText.isEmpty()) {
                             drawNodeText(context, textRenderer, Text.literal(labelText), labelX, labelY, labelColor);
                         }
@@ -4022,8 +4276,15 @@ public class NodeGraph {
                         int paramVariableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
                         Set<String> paramVariableNames = collectRuntimeVariableNames(node);
                         InlineVariableRender paramRenderData = null;
-                        if (shouldBuildInlineExpressionRender(value, paramVariableNames)) {
-                            InlineVariableRender candidate = buildInlineVariableRender(value, paramVariableNames, valueColor, paramVariableHighlightColor);
+                        boolean allowRelativeMarker = supportsRelativeInlineParameter(node, param);
+                        if (shouldBuildInlineExpressionRender(value, paramVariableNames, allowRelativeMarker)) {
+                            InlineVariableRender candidate = buildInlineVariableRender(
+                                value,
+                                paramVariableNames,
+                                valueColor,
+                                paramVariableHighlightColor,
+                                allowRelativeMarker
+                            );
                             if (editingThis) {
                                 paramRenderData = candidate;
                                 displayValue = paramRenderData.displayText;
@@ -4136,7 +4397,9 @@ public class NodeGraph {
                 }
                 if (node.hasMessageInputFields()) {
                     renderMessageInputFields(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-                    renderMessageScopeToggle(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
+                    if (node.hasMessageScopeToggle()) {
+                        renderMessageScopeToggle(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
+                    }
                     renderMessageButtons(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
                 }
                 if (node.hasBookTextInput()) {
@@ -4394,7 +4657,18 @@ public class NodeGraph {
 
         float hoverProgress = getAnimatedHoverProgress(node.getId() + "#selector:" + fieldLeft + ":" + fieldTop, hovered || open);
         int accentColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.8f) : getSelectedNodeAccentColor();
-        UIStyleHelper.FieldPalette palette = UIStyleHelper.getDropdownFieldPalette(accentColor, hoverProgress, open, false);
+        UIStyleHelper.FieldPalette palette;
+        if (compactViewportMode && !isOverSidebar) {
+            palette = new UIStyleHelper.FieldPalette(
+                open ? UITheme.BACKGROUND_INPUT : UITheme.BACKGROUND_SECONDARY,
+                open ? accentColor : UITheme.BORDER_DEFAULT,
+                UITheme.PANEL_INNER_BORDER,
+                UITheme.TEXT_PRIMARY,
+                UITheme.TEXT_TERTIARY
+            );
+        } else {
+            palette = UIStyleHelper.getDropdownFieldPalette(accentColor, hoverProgress, open, false);
+        }
         int textColor = isOverSidebar ? UITheme.TEXT_TERTIARY : palette.textColor();
         int labelColor = includeValue && !isOverSidebar && !(hovered || open)
             ? UITheme.NODE_LABEL_COLOR
@@ -4406,12 +4680,13 @@ public class NodeGraph {
             fieldTop,
             fieldWidth,
             fieldHeight,
-            new UIStyleHelper.FieldPalette(
+            getLowDetailAwareFieldPalette(
                 isOverSidebar ? UITheme.BACKGROUND_SECONDARY : palette.backgroundColor(),
                 isOverSidebar ? UITheme.BORDER_SUBTLE : palette.borderColor(),
                 isOverSidebar ? UITheme.PANEL_INNER_BORDER : palette.innerBorderColor(),
                 textColor,
-                palette.placeholderColor()
+                palette.placeholderColor(),
+                isOverSidebar
             )
         );
 
@@ -4436,6 +4711,9 @@ public class NodeGraph {
     }
 
     private float getAnimatedHoverProgress(Object key, boolean highlighted) {
+        if (compactViewportMode) {
+            return 0f;
+        }
         return HoverAnimator.getProgress(key, highlighted, UITheme.HOVER_ANIM_MS);
     }
 
@@ -4444,6 +4722,15 @@ public class NodeGraph {
     }
 
     private UIStyleHelper.FieldPalette getNodeInputPalette(boolean isOverSidebar, int accentColor, float progress, boolean active, boolean disabled) {
+        if (compactViewportMode && !isOverSidebar) {
+            return new UIStyleHelper.FieldPalette(
+                active ? UITheme.BACKGROUND_INPUT : UITheme.BACKGROUND_SECONDARY,
+                active ? accentColor : UITheme.BORDER_DEFAULT,
+                active ? accentColor : UITheme.BORDER_DEFAULT,
+                active ? UITheme.TEXT_EDITING : UITheme.TEXT_PRIMARY,
+                UITheme.TEXT_TERTIARY
+            );
+        }
         UIStyleHelper.FieldPalette palette = UIStyleHelper.getInputFieldPalette(accentColor, progress, active, disabled);
         if (!isOverSidebar) {
             return palette;
@@ -4455,6 +4742,14 @@ public class NodeGraph {
             active ? UITheme.TEXT_EDITING : UITheme.TEXT_TERTIARY,
             disabled ? UITheme.TEXT_TERTIARY : palette.placeholderColor()
         );
+    }
+
+    private UIStyleHelper.FieldPalette getLowDetailAwareFieldPalette(int backgroundColor, int borderColor, int innerBorderColor,
+                                                                     int textColor, int placeholderColor, boolean isOverSidebar) {
+        if (compactViewportMode && !isOverSidebar) {
+            innerBorderColor = borderColor;
+        }
+        return new UIStyleHelper.FieldPalette(backgroundColor, borderColor, innerBorderColor, textColor, placeholderColor);
     }
 
     private void renderDirectionModeTabs(DrawContext context, TextRenderer textRenderer, Node node, boolean isOverSidebar,
@@ -4584,15 +4879,11 @@ public class NodeGraph {
     }
 
     private String getParameterLabelText(Node node, NodeParameter parameter, TextRenderer textRenderer, int maxWidth) {
-        String displayName = node.getParameterDisplayName(parameter);
-        if (displayName == null || displayName.isEmpty()) {
+        ParameterLayoutCacheEntry layout = getParameterLayoutCacheEntry(node, parameter, textRenderer);
+        if (layout == null || layout.displayName().isEmpty()) {
             return "";
         }
-        String label = displayName + ":";
-        if (textRenderer == null || maxWidth <= 0) {
-            return label;
-        }
-        return trimTextToWidth(label, textRenderer, maxWidth);
+        return layout.labelText();
     }
 
     private boolean isStandaloneParameterNode(Node node) {
@@ -4611,11 +4902,48 @@ public class NodeGraph {
         if (shouldLeftAlignParameterValue(node)) {
             return fieldLeft + 4;
         }
+        ParameterLayoutCacheEntry layout = getParameterLayoutCacheEntry(node, parameter, textRenderer);
+        if (layout == null) {
+            return fieldLeft + 8;
+        }
+        return layout.valueStartX();
+    }
+
+    private ParameterLayoutCacheEntry getParameterLayoutCacheEntry(Node node, NodeParameter parameter, TextRenderer textRenderer) {
+        if (node == null || parameter == null) {
+            return null;
+        }
+        String parameterKey = parameter.getName();
+        Map<String, ParameterLayoutCacheEntry> nodeCache = parameterLayoutCache.computeIfAbsent(node, ignored -> new HashMap<>());
+        String displayName = node.getParameterDisplayName(parameter);
+        if (displayName == null) {
+            displayName = "";
+        }
+        int fieldLeft = getParameterFieldLeft(node);
         int fieldWidth = getParameterFieldWidth(node);
         int maxLabelWidth = Math.max(0, fieldWidth - 40);
-        String label = getParameterLabelText(node, parameter, textRenderer, maxLabelWidth);
-        int labelWidth = textRenderer != null ? textRenderer.getWidth(label) : 0;
-        return fieldLeft + 4 + labelWidth + 4;
+        boolean leftAligned = shouldLeftAlignParameterValue(node);
+        ParameterLayoutCacheEntry cached = nodeCache.get(parameterKey);
+        if (cached != null
+            && cached.fieldLeft() == fieldLeft
+            && cached.fieldWidth() == fieldWidth
+            && cached.maxLabelWidth() == maxLabelWidth
+            && cached.leftAligned() == leftAligned
+            && cached.displayName().equals(displayName)) {
+            return cached;
+        }
+
+        String label = displayName.isEmpty() ? "" : displayName + ":";
+        String labelText = label;
+        int labelWidth = 0;
+        if (textRenderer != null && !label.isEmpty()) {
+            labelText = maxLabelWidth > 0 ? trimTextToWidth(label, textRenderer, maxLabelWidth) : label;
+            labelWidth = textRenderer.getWidth(labelText);
+        }
+        int valueStartX = leftAligned ? fieldLeft + 4 : fieldLeft + 4 + labelWidth + 4;
+        ParameterLayoutCacheEntry entry = new ParameterLayoutCacheEntry(displayName, fieldLeft, fieldWidth, maxLabelWidth, leftAligned, labelText, valueStartX);
+        nodeCache.put(parameterKey, entry);
+        return entry;
     }
 
     private String formatVillagerTradeValue(String rawValue) {
@@ -4965,7 +5293,7 @@ public class NodeGraph {
     }
 
     private boolean isPointInsideMessageScopeToggle(Node node, int mouseX, int mouseY) {
-        if (node == null || !node.hasMessageInputFields()) {
+        if (node == null || !node.hasMessageScopeToggle()) {
             return false;
         }
         int worldMouseX = screenToWorldX(mouseX);
@@ -4979,6 +5307,9 @@ public class NodeGraph {
     }
 
     public boolean handleMessageScopeToggleClick(Node node, int mouseX, int mouseY) {
+        if (node == null || !node.hasMessageScopeToggle()) {
+            return false;
+        }
         if (!isPointInsideMessageScopeToggle(node, mouseX, mouseY)) {
             return false;
         }
@@ -5348,12 +5679,13 @@ public class NodeGraph {
                 inputTop,
                 fieldWidth,
                 fieldHeight,
-                new UIStyleHelper.FieldPalette(
+                getLowDetailAwareFieldPalette(
                     palette.backgroundColor(),
                     borderColor,
                     palette.innerBorderColor(),
                     palette.textColor(),
-                    palette.placeholderColor()
+                    palette.placeholderColor(),
+                    isOverSidebar
                 )
             );
 
@@ -5373,7 +5705,7 @@ public class NodeGraph {
             String display = editingAxis
                 ? value
                 : trimTextToWidth(value, textRenderer, fieldWidth - 6);
-            int variableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
+            int variableHighlightColor = UITheme.ACCENT_AMBER;
             Set<String> coordVariableNames = collectRuntimeVariableNames(node);
             InlineVariableRender coordRenderData = null;
             if (shouldBuildInlineExpressionRender(value, coordVariableNames)) {
@@ -5467,7 +5799,8 @@ public class NodeGraph {
         }
 
         int fieldBottom = fieldTop + fieldHeight;
-        int disabledBg = isOverSidebar ? UITheme.BACKGROUND_TERTIARY : UITheme.BUTTON_DEFAULT_BG;
+        int disabledBg = isOverSidebar ? UITheme.BACKGROUND_TERTIARY
+            : (compactViewportMode ? UITheme.BACKGROUND_SECONDARY : UITheme.BUTTON_DEFAULT_BG);
         boolean hovered = !isOverSidebar
             && worldMouseX >= node.getAmountFieldLeft()
             && worldMouseX <= node.getAmountFieldLeft() + fieldWidth
@@ -5490,12 +5823,13 @@ public class NodeGraph {
             fieldHeight,
             amountEnabled
                 ? palette
-                : new UIStyleHelper.FieldPalette(
+                : getLowDetailAwareFieldPalette(
                     disabledBg,
                     isOverSidebar ? UITheme.BORDER_SUBTLE : UITheme.BORDER_DEFAULT,
                     UITheme.PANEL_INNER_BORDER,
                     palette.textColor(),
-                    palette.placeholderColor()
+                    palette.placeholderColor(),
+                    isOverSidebar
                 )
         );
 
@@ -5527,7 +5861,7 @@ public class NodeGraph {
             }
             valueColor = UITheme.TEXT_TERTIARY;
         }
-            int variableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
+            int variableHighlightColor = UITheme.ACCENT_AMBER;
         Set<String> amountVariableNames = collectRuntimeVariableNames(node);
         InlineVariableRender amountRenderData = null;
         if (amountEnabled && !showPlaceholder && shouldBuildInlineExpressionRender(value, amountVariableNames)) {
@@ -5600,12 +5934,13 @@ public class NodeGraph {
                 false
             );
             if (isOverSidebar) {
-                signPalette = new UIStyleHelper.FieldPalette(
+                signPalette = getLowDetailAwareFieldPalette(
                     UITheme.BACKGROUND_SECONDARY,
                     UITheme.BORDER_HIGHLIGHT,
                     UITheme.PANEL_INNER_BORDER,
                     UITheme.TEXT_TERTIARY,
-                    UITheme.TEXT_TERTIARY
+                    UITheme.TEXT_TERTIARY,
+                    true
                 );
             }
             int signTextColor = signPalette.textColor();
@@ -5639,7 +5974,8 @@ public class NodeGraph {
         drawNodeText(context, textRenderer, Text.translatable("pathmind.field.rounding"), fieldLeft + 2, labelY, baseLabelColor);
 
         int fieldBottom = fieldTop + fieldHeight;
-        int disabledBg = isOverSidebar ? UITheme.BACKGROUND_TERTIARY : UITheme.BUTTON_DEFAULT_BG;
+        int disabledBg = isOverSidebar ? UITheme.BACKGROUND_TERTIARY
+            : (compactViewportMode ? UITheme.BACKGROUND_SECONDARY : UITheme.BUTTON_DEFAULT_BG);
         UIStyleHelper.FieldPalette palette = getNodeInputPalette(isOverSidebar, getSelectedNodeAccentColor(), open ? 1f : 0f, open, !enabled);
         int valueColor = enabled ? textColor : UITheme.TEXT_SECONDARY;
 
@@ -5651,12 +5987,13 @@ public class NodeGraph {
             fieldHeight,
             enabled
                 ? palette
-                : new UIStyleHelper.FieldPalette(
+                : getLowDetailAwareFieldPalette(
                     disabledBg,
                     isOverSidebar ? UITheme.BORDER_SUBTLE : UITheme.BORDER_DEFAULT,
                     UITheme.PANEL_INNER_BORDER,
                     palette.textColor(),
-                    palette.placeholderColor()
+                    palette.placeholderColor(),
+                    isOverSidebar
                 )
         );
 
@@ -5775,7 +6112,7 @@ public class NodeGraph {
         int baseLabelColor = isOverSidebar ? UITheme.NODE_LABEL_DIMMED : UITheme.NODE_LABEL_COLOR;
         int textColor = isOverSidebar ? UITheme.TEXT_TERTIARY : UITheme.TEXT_PRIMARY;
         int activeTextColor = UITheme.TEXT_EDITING;
-        int variableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
+        int variableHighlightColor = UITheme.ACCENT_AMBER;
 
         boolean editing = isEditingMessageField() && messageEditingNode == node;
         if (editing) {
@@ -5796,7 +6133,7 @@ public class NodeGraph {
 
             boolean editingThis = editing && messageEditingIndex == i;
             int labelY = labelTop + Math.max(0, (labelHeight - textRenderer.fontHeight) / 2);
-            String label = fieldCount > 1 ? "Message " + (i + 1) : "Message";
+            String label = node.getMessageFieldLabelText(i);
             drawNodeText(context, textRenderer, Text.literal(label), fieldLeft + 2, labelY, baseLabelColor);
 
             int fieldBottom = fieldTop + fieldHeight;
@@ -5904,6 +6241,12 @@ public class NodeGraph {
     }
 
     private InlineVariableRender buildInlineVariableRender(String rawText, Set<String> variableNames, int baseColor, int highlightColor) {
+        return buildInlineVariableRender(rawText, variableNames, baseColor, highlightColor, false);
+    }
+
+    private InlineVariableRender buildInlineVariableRender(String rawText, Set<String> variableNames, int baseColor, int highlightColor,
+                                                           boolean allowRelativeMarker) {
+        rawText = LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(rawText);
         if (rawText == null || rawText.isEmpty()) {
             return new InlineVariableRender(rawText == null ? "" : rawText, Collections.emptyList(), new int[0]);
         }
@@ -5911,27 +6254,53 @@ public class NodeGraph {
         List<Integer> removedPositions = new ArrayList<>();
         StringBuilder displayBuilder = new StringBuilder();
         int operatorColor = UITheme.DROP_ACCENT_GREEN;
+        int relativeColor = UITheme.TEXT_RELATIVE_MARKER;
         int cursor = 0;
+        int plainStart = 0;
         while (cursor < rawText.length()) {
-            int tildeIndex = rawText.indexOf('~', cursor);
-            if (tildeIndex < 0) {
-                appendStyledPlainSegments(rawText.substring(cursor), baseColor, operatorColor, segments, displayBuilder);
-                break;
-            }
-            if (tildeIndex > cursor) {
-                appendStyledPlainSegments(rawText.substring(cursor, tildeIndex), baseColor, operatorColor, segments, displayBuilder);
-            }
-            VariableReferenceMatch match = findInlineVariableReference(rawText, tildeIndex, variableNames);
-            if (match != null) {
-                removedPositions.add(tildeIndex);
-                segments.add(new InlineTextSegment(match.name, highlightColor));
-                displayBuilder.append(match.name);
-                cursor = match.endIndex;
+            char current = rawText.charAt(cursor);
+            if (current == '$') {
+                if (cursor > plainStart) {
+                    appendStyledPlainSegment(rawText.substring(plainStart, cursor), baseColor, segments, displayBuilder);
+                }
+                VariableReferenceMatch match = findInlineVariableReference(rawText, cursor, variableNames);
+                if (match != null) {
+                    removedPositions.add(cursor);
+                    segments.add(new InlineTextSegment(match.name, highlightColor));
+                    displayBuilder.append(match.name);
+                    cursor = match.endIndex;
+                } else {
+                    segments.add(new InlineTextSegment("$", baseColor));
+                    displayBuilder.append("$");
+                    cursor++;
+                }
+                plainStart = cursor;
                 continue;
             }
-            segments.add(new InlineTextSegment("~", baseColor));
-            displayBuilder.append("~");
-            cursor = tildeIndex + 1;
+            if (isInlineArithmeticOperator(current)) {
+                if (cursor > plainStart) {
+                    appendStyledPlainSegment(rawText.substring(plainStart, cursor), baseColor, segments, displayBuilder);
+                }
+                segments.add(new InlineTextSegment(Character.toString(current), operatorColor));
+                displayBuilder.append(current);
+                cursor++;
+                plainStart = cursor;
+                continue;
+            }
+            if (allowRelativeMarker && current == '~') {
+                if (cursor > plainStart) {
+                    appendStyledPlainSegment(rawText.substring(plainStart, cursor), baseColor, segments, displayBuilder);
+                }
+                segments.add(new InlineTextSegment("~", relativeColor));
+                displayBuilder.append('~');
+                cursor++;
+                plainStart = cursor;
+                continue;
+            }
+            cursor++;
+        }
+        if (plainStart < rawText.length()) {
+            appendStyledPlainSegment(rawText.substring(plainStart), baseColor, segments, displayBuilder);
         }
         int[] removed = new int[removedPositions.size()];
         for (int i = 0; i < removedPositions.size(); i++) {
@@ -5941,13 +6310,24 @@ public class NodeGraph {
     }
 
     private boolean shouldBuildInlineExpressionRender(String rawText, Set<String> variableNames) {
+        return shouldBuildInlineExpressionRender(rawText, variableNames, false);
+    }
+
+    private boolean shouldBuildInlineExpressionRender(String rawText, Set<String> variableNames, boolean allowRelativeMarker) {
+        rawText = LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(rawText);
+        if (compactViewportMode) {
+            return false;
+        }
         if (rawText == null || rawText.isEmpty()) {
             return false;
         }
         if (containsInlineArithmeticOperator(rawText)) {
             return true;
         }
-        return variableNames != null && !variableNames.isEmpty() && rawText.indexOf('~') >= 0;
+        if (allowRelativeMarker && rawText.indexOf('~') >= 0) {
+            return true;
+        }
+        return variableNames != null && !variableNames.isEmpty() && rawText.indexOf('$') >= 0;
     }
 
     private boolean isInlineVariableChar(char character) {
@@ -5970,40 +6350,20 @@ public class NodeGraph {
         return character == '+' || character == '-' || character == '*' || character == '/' || character == '^';
     }
 
-    private void appendStyledPlainSegments(String text, int baseColor, int operatorColor,
-                                           List<InlineTextSegment> segments, StringBuilder displayBuilder) {
+    private void appendStyledPlainSegment(String text, int baseColor, List<InlineTextSegment> segments, StringBuilder displayBuilder) {
         if (text == null || text.isEmpty()) {
             return;
         }
-        int start = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char current = text.charAt(i);
-            if (!isInlineArithmeticOperator(current)) {
-                continue;
-            }
-            if (i > start) {
-                String plain = text.substring(start, i);
-                segments.add(new InlineTextSegment(plain, baseColor));
-                displayBuilder.append(plain);
-            }
-            String operator = Character.toString(current);
-            segments.add(new InlineTextSegment(operator, operatorColor));
-            displayBuilder.append(operator);
-            start = i + 1;
-        }
-        if (start < text.length()) {
-            String tail = text.substring(start);
-            segments.add(new InlineTextSegment(tail, baseColor));
-            displayBuilder.append(tail);
-        }
+        segments.add(new InlineTextSegment(text, baseColor));
+        displayBuilder.append(text);
     }
 
-    private VariableReferenceMatch findInlineVariableReference(String rawText, int tildeIndex, Set<String> variableNames) {
-        if (rawText == null || tildeIndex < 0 || tildeIndex >= rawText.length() || rawText.charAt(tildeIndex) != '~'
+    private VariableReferenceMatch findInlineVariableReference(String rawText, int variableIndex, Set<String> variableNames) {
+        if (rawText == null || variableIndex < 0 || variableIndex >= rawText.length() || rawText.charAt(variableIndex) != '$'
             || variableNames == null || variableNames.isEmpty()) {
             return null;
         }
-        int nameStart = tildeIndex + 1;
+        int nameStart = variableIndex + 1;
         if (nameStart >= rawText.length()) {
             return null;
         }
@@ -6030,18 +6390,28 @@ public class NodeGraph {
     }
 
     private boolean isSingleKnownInlineVariableReference(String rawText, Set<String> variableNames) {
+        rawText = LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(rawText);
         if (rawText == null || variableNames == null || variableNames.isEmpty()) {
             return false;
         }
         String trimmed = rawText.trim();
-        if (!trimmed.equals(rawText) || !trimmed.startsWith("~")) {
+        if (!trimmed.equals(rawText) || !trimmed.startsWith("$")) {
             return false;
         }
         VariableReferenceMatch match = findInlineVariableReference(trimmed, 0, variableNames);
         return match != null && match.endIndex == trimmed.length();
     }
 
-    /** Returns true if value is empty or a valid arithmetic expression using numbers and/or known ~variable references. */
+    private boolean supportsRelativeInlineParameter(Node node, NodeParameter parameter) {
+        if (node == null || parameter == null) {
+            return false;
+        }
+        String parameterName = parameter.getName();
+        return RelativeInputSupport.supportsRelativeCoordinate(node, parameterName)
+            || RelativeInputSupport.supportsRelativeLook(node, parameterName);
+    }
+
+    /** Returns true if value is empty or a valid arithmetic expression using numbers and/or known $variable references. */
     private boolean isNumericOrVariableReference(String value, Node node, boolean allowDecimal, boolean requireCoordinateValid) {
         if (value == null) {
             value = "";
@@ -6057,6 +6427,7 @@ public class NodeGraph {
     }
 
     private boolean isValidNumericExpression(String value, Set<String> variableNames, boolean allowDecimal, boolean requireCoordinateValid) {
+        value = LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(value);
         if (value == null) {
             return false;
         }
@@ -6071,6 +6442,41 @@ public class NodeGraph {
     }
 
     private Set<String> collectRuntimeVariableNames(Node node) {
+        Node startNode = node != null ? node.getOwningStartNode() : null;
+        String startId = startNode != null ? startNode.getId() : "";
+        Set<String> cached = runtimeVariableNamesFrameCache.get(startId);
+        if (cached != null) {
+            return cached;
+        }
+        Set<String> names = new HashSet<>(getBaseRuntimeVariableNames());
+        ExecutionManager manager = ExecutionManager.getInstance();
+        List<ExecutionManager.RuntimeVariableEntry> entries = manager.getRuntimeVariableEntries();
+        if (!entries.isEmpty()) {
+            String effectiveStartId = startNode != null ? startNode.getId() : null;
+            for (ExecutionManager.RuntimeVariableEntry entry : entries) {
+                if (entry == null) {
+                    continue;
+                }
+                if (effectiveStartId != null && !effectiveStartId.equals(entry.getStartNodeId())) {
+                    continue;
+                }
+                String name = entry.getName();
+                if (name != null) {
+                    String trimmed = name.trim();
+                    if (!trimmed.isEmpty()) {
+                        names.add(trimmed);
+                    }
+                }
+            }
+        }
+        runtimeVariableNamesFrameCache.put(startId, names);
+        return names;
+    }
+
+    private Set<String> getBaseRuntimeVariableNames() {
+        if (cachedBaseRuntimeVariableNames != null) {
+            return cachedBaseRuntimeVariableNames;
+        }
         Set<String> names = new HashSet<>();
         for (Node graphNode : nodes) {
             if (graphNode == null || graphNode.getType() != NodeType.VARIABLE) {
@@ -6089,39 +6495,44 @@ public class NodeGraph {
                 names.add(trimmed);
             }
         }
-        ExecutionManager manager = ExecutionManager.getInstance();
-        List<ExecutionManager.RuntimeVariableEntry> entries = manager.getRuntimeVariableEntries();
-        if (!entries.isEmpty()) {
-            Node startNode = node != null ? node.getOwningStartNode() : null;
-            String startId = startNode != null ? startNode.getId() : null;
-            for (ExecutionManager.RuntimeVariableEntry entry : entries) {
-                if (entry == null) {
-                    continue;
-                }
-                if (startId != null && !startId.equals(entry.getStartNodeId())) {
-                    continue;
-                }
-                String name = entry.getName();
-                if (name != null) {
-                    String trimmed = name.trim();
-                    if (!trimmed.isEmpty()) {
-                        names.add(trimmed);
-                    }
-                }
+        collectActivePresetInputNames(names);
+        cachedBaseRuntimeVariableNames = names;
+        return cachedBaseRuntimeVariableNames;
+    }
+
+    private void collectActivePresetInputNames(Set<String> names) {
+        if (names == null) {
+            return;
+        }
+        String presetName = activePreset == null ? "" : activePreset.trim();
+        if (presetName.isEmpty()) {
+            return;
+        }
+        NodeGraphData snapshot = exportGraphDataSnapshot();
+        NodeGraphData.CustomNodeDefinition definition = NodeGraphPersistence.resolveCustomNodeDefinition(presetName, snapshot);
+        if (definition == null || definition.getInputs() == null || definition.getInputs().isEmpty()) {
+            return;
+        }
+        for (NodeGraphData.CustomNodePort port : definition.getInputs()) {
+            if (port == null || port.getName() == null) {
+                continue;
+            }
+            String trimmed = port.getName().trim();
+            if (!trimmed.isEmpty()) {
+                names.add(trimmed);
             }
         }
-        return names;
     }
 
     private static final class InlineVariableRender {
         private final String displayText;
         private final List<InlineTextSegment> segments;
-        private final int[] removedTildePositions;
+        private final int[] removedVariablePrefixPositions;
 
-        private InlineVariableRender(String displayText, List<InlineTextSegment> segments, int[] removedTildePositions) {
+        private InlineVariableRender(String displayText, List<InlineTextSegment> segments, int[] removedVariablePrefixPositions) {
             this.displayText = displayText == null ? "" : displayText;
             this.segments = segments == null ? Collections.emptyList() : segments;
-            this.removedTildePositions = removedTildePositions == null ? new int[0] : removedTildePositions;
+            this.removedVariablePrefixPositions = removedVariablePrefixPositions == null ? new int[0] : removedVariablePrefixPositions;
         }
 
         private int toDisplayIndex(int rawIndex) {
@@ -6129,7 +6540,7 @@ public class NodeGraph {
                 return 0;
             }
             int removed = 0;
-            for (int pos : removedTildePositions) {
+            for (int pos : removedVariablePrefixPositions) {
                 if (pos < rawIndex) {
                     removed++;
                 } else {
@@ -6252,7 +6663,7 @@ public class NodeGraph {
                 skipWhitespace();
                 return parseNumber(true);
             }
-            if (peek() == '~') {
+            if (peek() == '$') {
                 VariableReferenceMatch match = matchVariableAt(index);
                 if (match == null) {
                     return false;
@@ -6295,11 +6706,11 @@ public class NodeGraph {
             return true;
         }
 
-        private VariableReferenceMatch matchVariableAt(int tildeIndex) {
-            if (tildeIndex < 0 || tildeIndex >= input.length() || input.charAt(tildeIndex) != '~') {
+        private VariableReferenceMatch matchVariableAt(int variableIndex) {
+            if (variableIndex < 0 || variableIndex >= input.length() || input.charAt(variableIndex) != '$') {
                 return null;
             }
-            int nameStart = tildeIndex + 1;
+            int nameStart = variableIndex + 1;
             VariableReferenceMatch bestMatch = null;
             for (String variableName : variableNames) {
                 if (variableName == null || variableName.isEmpty()) {
@@ -6506,6 +6917,9 @@ public class NodeGraph {
     }
 
     private void renderMessageScopeToggle(DrawContext context, TextRenderer textRenderer, Node node, boolean isOverSidebar, int mouseX, int mouseY) {
+        if (!node.hasMessageScopeToggle()) {
+            return;
+        }
         int labelColor = isOverSidebar ? UITheme.NODE_LABEL_DIMMED : UITheme.NODE_LABEL_COLOR;
         int fieldBackground = isOverSidebar ? UITheme.BACKGROUND_SECONDARY : UITheme.BACKGROUND_SIDEBAR;
         int borderColor = isOverSidebar ? UITheme.BORDER_SUBTLE : UITheme.BORDER_DEFAULT;
@@ -7143,7 +7557,7 @@ public class NodeGraph {
         display = editing
             ? display
             : trimTextToWidth(display, textRenderer, fieldWidth - reservedRightPadding);
-        int variableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
+        int variableHighlightColor = UITheme.ACCENT_AMBER;
         Set<String> stopTargetVariableNames = collectRuntimeVariableNames(node);
         InlineVariableRender stopTargetRenderData = null;
         if (shouldBuildInlineExpressionRender(value, stopTargetVariableNames)) {
@@ -7350,7 +7764,7 @@ public class NodeGraph {
         display = editing
             ? display
             : trimTextToWidth(display, textRenderer, fieldWidth - 6);
-        int variableHighlightColor = isOverSidebar ? toGrayscale(getSelectedNodeAccentColor(), 0.85f) : getSelectedNodeAccentColor();
+        int variableHighlightColor = UITheme.ACCENT_AMBER;
         Set<String> variableFieldVariableNames = collectRuntimeVariableNames(node);
         InlineVariableRender variableFieldRenderData = null;
         if (shouldBuildInlineExpressionRender(value, variableFieldVariableNames)) {
@@ -8214,7 +8628,8 @@ public class NodeGraph {
         String value = amountEditBuffer == null ? "" : amountEditBuffer.trim();
         if ((amountEditingNode.getType() == NodeType.PARAM_DURATION
             || amountEditingNode.getType() == NodeType.USE
-            || amountEditingNode.getType() == NodeType.SWING) && !value.startsWith("~")) {
+            || amountEditingNode.getType() == NodeType.SWING)
+            && !LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(value).startsWith("$")) {
             // Accept locale decimal input like "1,5" for duration-style fields.
             value = value.replace(',', '.');
         }
@@ -13727,11 +14142,25 @@ public class NodeGraph {
     }
 
     private String trimTextToWidth(String text, TextRenderer renderer, int maxWidth) {
+        if (text == null) {
+            return "";
+        }
+        if (renderer == null) {
+            return text;
+        }
+        TrimKey cacheKey = new TrimKey(text, maxWidth);
+        String cached = trimmedTextCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         if (renderer.getWidth(text) <= maxWidth) {
+            trimmedTextCache.put(cacheKey, text);
             return text;
         }
         int safeMaxWidth = Math.max(0, maxWidth);
-        return TextRenderUtil.trimWithEllipsis(renderer, text, safeMaxWidth);
+        String trimmed = TextRenderUtil.trimWithEllipsis(renderer, text, safeMaxWidth);
+        trimmedTextCache.put(cacheKey, trimmed);
+        return trimmed;
     }
 
     private void renderSocket(DrawContext context, int x, int y, boolean isInput, int color) {
@@ -13775,51 +14204,31 @@ public class NodeGraph {
         return (alpha << 24) | (red << 16) | (green << 8) | blue;
     }
 
-    private void renderConnections(DrawContext context, boolean onlyDragged) {
+    private int renderConnections(DrawContext context, boolean onlyDragged, boolean trackProfiler) {
         ExecutionManager manager = ExecutionManager.getInstance();
         boolean animateConnections = manager.isExecuting() && !denseViewportMode;
         long animationTimestamp = System.currentTimeMillis();
         int viewportWidth = getViewportWorldWidth();
         int viewportHeight = getViewportWorldHeight();
+        Set<Node> visibleRoots = new HashSet<>(getVisibleRootsForViewport());
+        long startNanos = trackProfiler ? System.nanoTime() : 0L;
+        int drawnConnections = 0;
 
         if (!onlyDragged) {
             for (NodeConnection connection : connections) {
-                Node outputNode = connection.getOutputNode();
-                Node inputNode = connection.getInputNode();
-
-                if (!outputNode.shouldRenderSockets() || !inputNode.shouldRenderSockets()) {
+                if (!shouldConsiderConnectionForViewport(connection, visibleRoots, viewportWidth, viewportHeight)) {
                     continue;
                 }
-
-                int outputX = outputNode.getSocketX(false) - cameraX;
-                int outputY = outputNode.getSocketY(connection.getOutputSocket(), false) - cameraY;
-                int inputX = inputNode.getSocketX(true) - cameraX;
-                int inputY = inputNode.getSocketY(connection.getInputSocket(), true) - cameraY;
-                int minX = Math.min(outputX, inputX) - VIEWPORT_CULL_MARGIN;
-                int maxX = Math.max(outputX, inputX) + VIEWPORT_CULL_MARGIN;
-                int minY = Math.min(outputY, inputY) - VIEWPORT_CULL_MARGIN;
-                int maxY = Math.max(outputY, inputY) + VIEWPORT_CULL_MARGIN;
-                if (viewportWidth > 0 && viewportHeight > 0
-                    && (maxX < 0 || minX > viewportWidth || maxY < 0 || minY > viewportHeight)) {
-                    continue;
+                if (renderConnection(context, connection, animateConnections, animationTimestamp, viewportWidth, viewportHeight, manager)) {
+                    drawnConnections++;
                 }
-
-                int color = outputNode.getOutputSocketColor(connection.getOutputSocket());
-                if (!denseViewportMode && shouldGrayOutConnection(outputNode, inputNode)) {
-                    color = toGrayscale(color, 0.65f);
-                }
-                if (connection == insertionPreviewConnection) {
-                    color = getSelectedNodeAccentColor();
-                }
-
-                if (animateConnections && manager.shouldAnimateConnection(connection)) {
-                    renderAnimatedConnectionCurve(context, outputX, outputY, inputX, inputY,
-                            color, animationTimestamp);
-                } else if (denseViewportMode) {
-                    renderDenseConnectionCurve(context, outputX, outputY, inputX, inputY, color);
-                } else {
-                    renderConnectionCurve(context, outputX, outputY, inputX, inputY,
-                            color);
+            }
+        } else if (shouldRenderConnectionsOnTop()) {
+            for (NodeConnection connection : connections) {
+                if (shouldRenderConnectionInDraggedPass(connection)) {
+                    if (renderConnection(context, connection, animateConnections, animationTimestamp, viewportWidth, viewportHeight, manager)) {
+                        drawnConnections++;
+                    }
                 }
             }
         }
@@ -13865,6 +14274,97 @@ public class NodeGraph {
         if (!onlyDragged && connectionCutActive) {
             renderConnectionCutPreview(context);
         }
+        if (trackProfiler) {
+            profilerConnectionMs = (System.nanoTime() - startNanos) / 1_000_000.0;
+        }
+        return drawnConnections;
+    }
+
+    private boolean shouldConsiderConnectionForViewport(NodeConnection connection, Set<Node> visibleRoots, int viewportWidth, int viewportHeight) {
+        if (connection == null) {
+            return false;
+        }
+
+        Node outputNode = connection.getOutputNode();
+        Node inputNode = connection.getInputNode();
+        if (outputNode == null || inputNode == null) {
+            return false;
+        }
+
+        Node outputRoot = getRootNode(outputNode);
+        Node inputRoot = getRootNode(inputNode);
+        if ((outputRoot != null && visibleRoots.contains(outputRoot))
+            || (inputRoot != null && visibleRoots.contains(inputRoot))) {
+            return true;
+        }
+
+        SelectionBounds outputBounds = outputRoot != null ? cachedHierarchyBounds.get(outputRoot) : null;
+        SelectionBounds inputBounds = inputRoot != null ? cachedHierarchyBounds.get(inputRoot) : null;
+        if (outputBounds == null || inputBounds == null) {
+            return true;
+        }
+
+        SelectionBounds combinedBounds = new SelectionBounds(
+            Math.min(outputBounds.minX, inputBounds.minX),
+            Math.min(outputBounds.minY, inputBounds.minY),
+            Math.max(outputBounds.maxX, inputBounds.maxX),
+            Math.max(outputBounds.maxY, inputBounds.maxY)
+        );
+        return intersectsViewport(combinedBounds, viewportWidth, viewportHeight);
+    }
+
+    private boolean renderConnection(DrawContext context, NodeConnection connection, boolean animateConnections,
+                                  long animationTimestamp, int viewportWidth, int viewportHeight,
+                                  ExecutionManager manager) {
+        if (connection == null) {
+            return false;
+        }
+
+        Node outputNode = connection.getOutputNode();
+        Node inputNode = connection.getInputNode();
+
+        if (outputNode == null || inputNode == null
+            || !outputNode.shouldRenderSockets() || !inputNode.shouldRenderSockets()) {
+            return false;
+        }
+
+        int outputX = outputNode.getSocketX(false) - cameraX;
+        int outputY = outputNode.getSocketY(connection.getOutputSocket(), false) - cameraY;
+        int inputX = inputNode.getSocketX(true) - cameraX;
+        int inputY = inputNode.getSocketY(connection.getInputSocket(), true) - cameraY;
+        int minX = Math.min(outputX, inputX) - VIEWPORT_CULL_MARGIN;
+        int maxX = Math.max(outputX, inputX) + VIEWPORT_CULL_MARGIN;
+        int minY = Math.min(outputY, inputY) - VIEWPORT_CULL_MARGIN;
+        int maxY = Math.max(outputY, inputY) + VIEWPORT_CULL_MARGIN;
+        if (viewportWidth > 0 && viewportHeight > 0
+            && (maxX < 0 || minX > viewportWidth || maxY < 0 || minY > viewportHeight)) {
+            return false;
+        }
+
+        int color = outputNode.getOutputSocketColor(connection.getOutputSocket());
+        if (!denseViewportMode && shouldGrayOutConnection(outputNode, inputNode)) {
+            color = toGrayscale(color, 0.65f);
+        }
+        if (connection == insertionPreviewConnection) {
+            color = getSelectedNodeAccentColor();
+        }
+
+        if (animateConnections && manager.shouldAnimateConnection(connection)) {
+            renderAnimatedConnectionCurve(context, outputX, outputY, inputX, inputY, color, animationTimestamp);
+        } else if (denseViewportMode) {
+            renderDenseConnectionCurve(context, outputX, outputY, inputX, inputY, color);
+        } else {
+            renderConnectionCurve(context, outputX, outputY, inputX, inputY, color);
+        }
+        return true;
+    }
+
+    boolean shouldRenderConnectionInDraggedPass(NodeConnection connection) {
+        if (connection == null) {
+            return false;
+        }
+        return isNodeInDraggedHierarchy(connection.getOutputNode())
+            || isNodeInDraggedHierarchy(connection.getInputNode());
     }
 
     private boolean isNodeOverSidebarForRender(Node node, int screenX, int screenWidth) {
@@ -14251,6 +14751,20 @@ public class NodeGraph {
             this.x = x;
             this.y = y;
         }
+    }
+
+    private record TrimKey(String text, int maxWidth) {
+    }
+
+    private record ParameterLayoutCacheEntry(
+        String displayName,
+        int fieldLeft,
+        int fieldWidth,
+        int maxLabelWidth,
+        boolean leftAligned,
+        String labelText,
+        int valueStartX
+    ) {
     }
 
     public List<Node> getNodes() {
@@ -14804,11 +15318,13 @@ public class NodeGraph {
                     control.attachActionNode(child);
                 }
             }
-            if (nodeData.getType() == NodeType.MESSAGE && nodeData.getMessageLines() != null) {
+            if (nodeData.getMessageLines() != null) {
                 Node messageNode = nodeMap.get(nodeData.getId());
-                if (messageNode != null) {
+                if (messageNode != null && messageNode.hasMessageInputFields()) {
                     messageNode.setMessageLines(nodeData.getMessageLines());
-                    messageNode.setMessageClientSide(Boolean.TRUE.equals(nodeData.getMessageClientSide()));
+                    if (messageNode.hasMessageScopeToggle()) {
+                        messageNode.setMessageClientSide(Boolean.TRUE.equals(nodeData.getMessageClientSide()));
+                    }
                 }
             }
             Node textNode = nodeMap.get(nodeData.getId());

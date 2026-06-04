@@ -38,9 +38,11 @@ import com.pathmind.util.BaritoneApiProxy;
 import com.pathmind.util.BlockSelection;
 import com.pathmind.util.EntityStateOptions;
 import com.pathmind.util.InventorySlotModeHelper;
+import com.pathmind.util.LegacyVariableSyntaxCompat;
 import com.pathmind.util.PlayerInventoryBridge;
 import com.pathmind.util.PathmindI18n;
 import com.pathmind.util.RecipeCompatibilityBridge;
+import com.pathmind.util.ClientMessageSender;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.EntityPose;
@@ -74,6 +76,8 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Box;
 import net.minecraft.world.RaycastContext;
+import net.minecraft.world.chunk.ChunkSection;
+import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen;
 import net.minecraft.client.gui.screen.ingame.BookEditScreen;
@@ -179,7 +183,7 @@ public class Node {
     static final int PARAMETER_SLOT_MIN_CONTENT_WIDTH = 88;
     static final int PARAMETER_SLOT_MIN_CONTENT_HEIGHT = 32;
     static final int PARAMETER_SLOT_LABEL_HEIGHT = 12;
-    static final int OPERATOR_SLOT_GAP = 14;
+    static final int OPERATOR_SLOT_GAP = 24;
     static final int MINIMAL_NODE_TAB_WIDTH = 6;
     static final int PARAMETER_FIELD_PADDING = 12;
     static final int PLAYER_ARMOR_SLOT_COUNT = 4;
@@ -352,8 +356,8 @@ public class Node {
         this.runtimeState = new NodeRuntimeState();
         this.parameters = new ArrayList<>();
         this.messageLines = new ArrayList<>();
-        if (type == NodeType.MESSAGE) {
-            this.messageLines.add("Hello World");
+        if (type == NodeType.MESSAGE || type == NodeType.CHANGE_VARIABLE) {
+            this.messageLines.add(getDefaultMessageLineValue());
         }
         this.messageClientSide = false;
         this.bookText = "";
@@ -400,8 +404,6 @@ public class Node {
     private static final String PARAM_ID_CREATE_LIST_MAX_BLOCKS = "create_list_max_blocks";
     private static final String PARAM_ID_RANDOM_ROUNDING = "random_rounding_mode";
     private static final String PARAM_ID_RANDOM_USE_ROUNDING = "random_use_rounding";
-    private static final String PARAM_ID_CHANGE_VARIABLE_AMOUNT = "change_variable_amount";
-    private static final String PARAM_ID_CHANGE_VARIABLE_OPERATION = "change_variable_operation";
     private static final String PARAM_ID_TRADE_NUMBER = "trade_number";
     private static final String PARAM_ID_TRADE_COUNT = "trade_count";
     private static final String PARAM_ID_DIRECTION_MODE = "direction_mode";
@@ -418,6 +420,9 @@ public class Node {
     private static final String PARAM_ID_ROTATION_DISTANCE = "rotation_distance";
     private static final String PARAM_ID_LOOK_YAW = "look_yaw";
     private static final String PARAM_ID_LOOK_PITCH = "look_pitch";
+    private static final String LOOK_DIRECTION_SOURCE_KEY = "__pathmind_source";
+    private static final String LOOK_DIRECTION_AXIS_KEY = "__pathmind_look_axis";
+    private static final String LOOK_DIRECTION_SOURCE_VALUE = "look_direction";
     private static final String PARAM_ID_INVENTORY_SLOT_INDEX = "inventory_slot_index";
     private static final String PARAM_ID_INVENTORY_SLOT_MODE = "inventory_slot_mode";
     private static final String PARAM_ID_HOTBAR_SLOT = "hotbar_slot";
@@ -703,6 +708,8 @@ public class Node {
             && type != NodeType.PARAM_DURATION
             && type != NodeType.SENSOR_POSITION_OF
             && type != NodeType.SENSOR_DISTANCE_BETWEEN
+            && type != NodeType.SENSOR_LOOK_DIRECTION
+            && type != NodeType.SENSOR_FIND_TRADE
             && type != NodeType.SENSOR_SLOT_ITEM_COUNT;
     }
 
@@ -733,6 +740,7 @@ public class Node {
 					|| type == NodeType.PARAM_BLOCK_FACE
 					|| type == NodeType.SENSOR_POSITION_OF
 					|| type == NodeType.SENSOR_DISTANCE_BETWEEN
+					|| type == NodeType.SENSOR_FIND_TRADE
 					|| type == NodeType.SENSOR_SLOT_ITEM_COUNT;
 		}
 
@@ -759,7 +767,6 @@ public class Node {
             || type == NodeType.SENSOR_TARGETED_BLOCK_FACE
             || type == NodeType.SENSOR_TARGETED_BLOCK
             || type == NodeType.SENSOR_TARGETED_ENTITY
-            || type == NodeType.SENSOR_LOOK_DIRECTION
             || type == NodeType.SENSOR_CURRENT_HAND
             || type == NodeType.SENSOR_IS_ON_GROUND
             || isComparisonOperator()
@@ -801,6 +808,9 @@ public class Node {
             return blockParameter == null || !blockParameterProvidesPlacementCoordinates(blockParameter);
         }
         if (type == NodeType.PLACE_HAND) {
+            return false;
+        }
+        if (type == NodeType.EVENT_FUNCTION) {
             return false;
         }
         return slotIndex == 0;
@@ -1197,7 +1207,7 @@ public class Node {
     }
 
     public boolean showsModeFieldAboveParameterSlot() {
-        return type == NodeType.SENSOR_POSITION_OF
+        return (type == NodeType.SENSOR_POSITION_OF || type == NodeType.SENSOR_LOOK_DIRECTION)
             && supportsModeSelection()
             && !isInlineParameterNode()
             && !shouldRenderInlineParameters()
@@ -1236,7 +1246,7 @@ public class Node {
     }
 
     public String getModeFieldLabelText() {
-        if (type == NodeType.SENSOR_POSITION_OF) {
+        if (type == NodeType.SENSOR_POSITION_OF || type == NodeType.SENSOR_LOOK_DIRECTION) {
             return "Axis:";
         }
         return "Mode:";
@@ -1300,7 +1310,8 @@ public class Node {
             case SENSOR_TARGETED_ENTITY -> NodeType.PARAM_ENTITY;
             case SENSOR_LOOK_DIRECTION -> isSensorLookSingleAxisMode() ? NodeType.PARAM_AMOUNT : NodeType.PARAM_ROTATION;
             case SENSOR_CURRENT_HAND -> NodeType.PARAM_INVENTORY_SLOT;
-            case SENSOR_SLOT_ITEM_COUNT, LIST_LENGTH -> NodeType.PARAM_AMOUNT;
+            case SENSOR_SLOT_ITEM_COUNT, SENSOR_FIND_TRADE, LIST_LENGTH -> NodeType.PARAM_AMOUNT;
+            case CHANGE_VARIABLE -> NodeType.PARAM_AMOUNT;
             default -> type;
         };
     }
@@ -1379,10 +1390,10 @@ public class Node {
             || type == NodeType.SENSOR_CHAT_MESSAGE
             || type == NodeType.SENSOR_VILLAGER_TRADE
             || type == NodeType.SENSOR_IN_STOCK
-            || type == NodeType.CHANGE_VARIABLE
             || type == NodeType.WAIT
             || type == NodeType.PARAM_DURATION
             || type == NodeType.USE
+            || type == NodeType.PRESS_KEY
             || type == NodeType.SWING
             || type == NodeType.DROP_ITEM;
     }
@@ -1465,7 +1476,7 @@ public class Node {
             return "Number";
         }
         return switch (type) {
-           case NodeType.USE, NodeType.SWING -> "Hold Duration";
+           case NodeType.USE, NodeType.PRESS_KEY, NodeType.SWING -> "Hold Duration";
             case NodeType.SENSOR_CHAT_MESSAGE -> "Seconds";
             case NodeType.SENSOR_HEALTH_BELOW -> "Health";
             case NodeType.SENSOR_HUNGER_BELOW -> "Hunger";
@@ -1487,7 +1498,7 @@ public class Node {
         }
         return switch (type) {
             case NodeType.MOVE_ITEM, NodeType.CONTROL_REPEAT, NodeType.DROP_ITEM -> "Count";
-            case NodeType.WAIT, NodeType.PARAM_DURATION, NodeType.SWING -> "Duration";
+            case NodeType.WAIT, NodeType.PARAM_DURATION, NodeType.SWING, NodeType.PRESS_KEY -> "Duration";
             case NodeType.USE -> "UseDurationSeconds";
             default -> "Amount";
         };
@@ -1502,16 +1513,10 @@ public class Node {
         if (hasAmountToggle()) {
             width = Math.max(40, width - (AMOUNT_TOGGLE_WIDTH + AMOUNT_TOGGLE_SPACING));
         }
-        if (hasAmountSignToggle()) {
-            width = Math.max(40, width - (AMOUNT_SIGN_TOGGLE_WIDTH + AMOUNT_TOGGLE_SPACING));
-        }
         return Math.max(width, layoutState.getAmountFieldWidthOverride());
     }
 
     public int getAmountFieldLeft() {
-        if (hasAmountSignToggle()) {
-            return getParameterSlotLeft() + AMOUNT_SIGN_TOGGLE_WIDTH + AMOUNT_TOGGLE_SPACING;
-        }
         return getParameterSlotLeft();
     }
 
@@ -1520,12 +1525,13 @@ public class Node {
             || type == NodeType.SENSOR_ITEM_IN_SLOT
             || type == NodeType.SENSOR_CHAT_MESSAGE
             || type == NodeType.USE
+            || type == NodeType.PRESS_KEY
             || type == NodeType.SWING
             || type == NodeType.DROP_ITEM;
     }
 
     public boolean hasAmountSignToggle() {
-        return type == NodeType.CHANGE_VARIABLE;
+        return false;
     }
 
     public boolean isAmountInputEnabled() {
@@ -1679,35 +1685,6 @@ public class Node {
             parameters.add(createParameter(PARAM_ID_RANDOM_ROUNDING, "Rounding", ParameterType.STRING, normalized));
         } else {
             modeParam.setStringValueFromUser(normalized);
-        }
-    }
-
-    public String getAmountOperation() {
-        NodeParameter param = getParameter("Operation");
-        String value = param != null ? param.getStringValue() : null;
-        if (value == null || value.trim().isEmpty()) {
-            NodeParameter legacy = getParameter("Increase");
-            if (legacy != null) {
-                String op = legacy.getBoolValue() ? "+" : "-";
-                if (param == null) {
-                    parameters.add(createParameter(PARAM_ID_CHANGE_VARIABLE_OPERATION, "Operation", ParameterType.STRING, op));
-                } else {
-                    param.setStringValue(op);
-                }
-                return op;
-            }
-            return "+";
-        }
-        return normalizeOperation(value);
-    }
-
-    public void setAmountOperation(String operation) {
-        String normalized = normalizeOperation(operation);
-        NodeParameter param = getParameter("Operation");
-        if (param == null) {
-            parameters.add(createParameter(PARAM_ID_CHANGE_VARIABLE_OPERATION, "Operation", ParameterType.STRING, normalized));
-        } else {
-            param.setStringValueFromUser(normalized);
         }
     }
 
@@ -2285,6 +2262,15 @@ public class Node {
                 }
                 yield values;
             }
+            case LOOK -> {
+                if (slotIndex == 0 && parameterNode != null) {
+                    Map<String, String> remapped = remapSingleAxisLookValues(values, parameterNode);
+                    if (remapped != values) {
+                        yield remapped;
+                    }
+                }
+                yield values;
+            }
             default -> values;
         };
     }
@@ -2768,23 +2754,15 @@ public class Node {
                 }
             }
             case SENSOR_DISTANCE_BETWEEN -> {
-                Node parameterNodeA = getAttachedParameter(0);
-                Node parameterNodeB = getAttachedParameter(1);
+                Node parameterNodeA = resolveSensorParameterNode(getAttachedParameter(0), 0);
+                Node parameterNodeB = resolveSensorParameterNode(getAttachedParameter(1), 1);
                 if (parameterNodeA == null || parameterNodeB == null) {
                     break;
                 }
-                if (!providesTrait(parameterNodeA, NodeValueTrait.ENTITY)
-                    && !providesTrait(parameterNodeA, NodeValueTrait.COORDINATE)
-                    && !providesTrait(parameterNodeA, NodeValueTrait.BLOCK)
-                    && !providesTrait(parameterNodeA, NodeValueTrait.ITEM)
-                    && !providesTrait(parameterNodeA, NodeValueTrait.PLAYER)) {
+                if (!isDistanceBetweenSupportedTarget(parameterNodeA)) {
                     break;
                 }
-                if (!providesTrait(parameterNodeB, NodeValueTrait.ENTITY)
-                    && !providesTrait(parameterNodeB, NodeValueTrait.COORDINATE)
-                    && !providesTrait(parameterNodeB, NodeValueTrait.BLOCK)
-                    && !providesTrait(parameterNodeB, NodeValueTrait.ITEM)
-                    && !providesTrait(parameterNodeB, NodeValueTrait.PLAYER)) {
+                if (!isDistanceBetweenSupportedTarget(parameterNodeB)) {
                     break;
                 }
                 Optional<Vec3d> resolvedA = resolveDistanceBetweenTarget(parameterNodeA);
@@ -2906,6 +2884,18 @@ public class Node {
                 values.put("Value", countValue);
                 values.put(normalizeParameterKey("Value"), countValue);
             }
+            case SENSOR_FIND_TRADE -> {
+                int tradeNumber = villagerTradeSensorEvaluator().findTradeNumber();
+                String tradeValue = Integer.toString(Math.max(0, tradeNumber));
+                values.put("Amount", tradeValue);
+                values.put(normalizeParameterKey("Amount"), tradeValue);
+                values.put("Count", tradeValue);
+                values.put(normalizeParameterKey("Count"), tradeValue);
+                values.put("Value", tradeValue);
+                values.put(normalizeParameterKey("Value"), tradeValue);
+                values.put("Number", tradeValue);
+                values.put(normalizeParameterKey("Number"), tradeValue);
+            }
         }
 
         return values;
@@ -2960,6 +2950,9 @@ public class Node {
     }
 
     public int getBooleanToggleTop() {
+        if (hasParameterSlot()) {
+            return NodeSlotLayout.parameterSlotsBottom(this) + PARAMETER_SLOT_BOTTOM_PADDING + BOOLEAN_TOGGLE_TOP_MARGIN;
+        }
         return getY() + HEADER_HEIGHT + BOOLEAN_TOGGLE_TOP_MARGIN;
     }
 
@@ -2976,15 +2969,12 @@ public class Node {
     }
 
     public boolean supportsModeSelection() {
-        if (type == NodeType.SENSOR_LOOK_DIRECTION) {
-            return false;
-        }
         NodeMode[] modes = NodeMode.getModesForNodeType(type);
         return modes.length > 0;
     }
 
     public boolean hasMessageInputFields() {
-        return type == NodeType.MESSAGE;
+        return type == NodeType.MESSAGE || type == NodeType.CHANGE_VARIABLE;
     }
 
     public String getStickyNoteText() {
@@ -3112,7 +3102,7 @@ public class Node {
             return;
         }
         while (index >= messageLines.size()) {
-            messageLines.add("Hello World");
+            messageLines.add(getDefaultMessageLineValue());
         }
         messageLines.set(index, value == null ? "" : value);
     }
@@ -3125,7 +3115,7 @@ public class Node {
             }
         }
         if (messageLines.isEmpty()) {
-            messageLines.add("Hello World");
+            messageLines.add(getDefaultMessageLineValue());
         }
         layoutState.clearMessageFieldContentWidthOverride();
         recalculateDimensions();
@@ -3157,6 +3147,10 @@ public class Node {
         return type == NodeType.MESSAGE && messageClientSide;
     }
 
+    public boolean hasMessageScopeToggle() {
+        return type == NodeType.MESSAGE;
+    }
+
     public void setMessageClientSide(boolean messageClientSide) {
         if (type != NodeType.MESSAGE) {
             return;
@@ -3169,6 +3163,31 @@ public class Node {
             return;
         }
         messageClientSide = !messageClientSide;
+    }
+
+    public String getAmountOperation() {
+        NodeParameter operation = getParameter("Operation");
+        String value = operation == null ? "" : operation.getStringValue();
+        return value == null || value.isBlank() ? "+" : value;
+    }
+
+    public void setAmountOperation(String operation) {
+        NodeParameter parameter = getParameter("Operation");
+        if (parameter == null) {
+            return;
+        }
+        parameter.setStringValue(operation == null || operation.isBlank() ? "+" : operation);
+    }
+
+    public String getMessageFieldLabelText(int index) {
+        if (type == NodeType.CHANGE_VARIABLE) {
+            return getMessageFieldCount() > 1 ? "Expr " + (index + 1) : "Expression";
+        }
+        return getMessageFieldCount() > 1 ? "Message " + (index + 1) : "Message";
+    }
+
+    private String getDefaultMessageLineValue() {
+        return type == NodeType.CHANGE_VARIABLE ? "0" : "Hello World";
     }
 
     public int getMessageFieldDisplayHeight() {
@@ -3273,7 +3292,7 @@ public class Node {
     }
 
     public int getMessageScopeToggleDisplayHeight() {
-        if (!hasMessageInputFields()) {
+        if (!hasMessageScopeToggle()) {
             return 0;
         }
         return MESSAGE_SCOPE_TOP_MARGIN + MESSAGE_SCOPE_LABEL_HEIGHT + MESSAGE_SCOPE_TOGGLE_HEIGHT + MESSAGE_SCOPE_BOTTOM_MARGIN;
@@ -3596,8 +3615,6 @@ public class Node {
         }
         if ("Yaw".equalsIgnoreCase(parameterName)
             || "Pitch".equalsIgnoreCase(parameterName)
-            || "YawOffset".equalsIgnoreCase(parameterName)
-            || "PitchOffset".equalsIgnoreCase(parameterName)
             || "Distance".equalsIgnoreCase(parameterName)) {
             return getParameterDisplayName(parameter) + ": " + parameter.getDisplayValue();
         }
@@ -3614,8 +3631,6 @@ public class Node {
         String parameterName = parameter.getName();
         if ("Yaw".equalsIgnoreCase(parameterName)
             || "Pitch".equalsIgnoreCase(parameterName)
-            || "YawOffset".equalsIgnoreCase(parameterName)
-            || "PitchOffset".equalsIgnoreCase(parameterName)
             || "Distance".equalsIgnoreCase(parameterName)) {
             return getParameterDisplayValue(parameter);
         }
@@ -3641,8 +3656,6 @@ public class Node {
 
     public CompletableFuture<Void> execute(int executionId) {
         CompletableFuture<Void> future = new CompletableFuture<>();
-
-        // Execute on the main Minecraft thread
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
 
         if (hasParameterSlot()) {
@@ -3661,6 +3674,17 @@ public class Node {
             return future;
         }
 
+        if (!requiresClientThreadExecution()) {
+            try {
+                ExecutionManager.getInstance().runWithExecutionContext(executionId,
+                    () -> NodeCommandDispatcher.execute(this, future));
+            } catch (Exception e) {
+                LOGGER.warn("Error executing node {}: {}", type, e.getMessage(), e);
+                NodeExecutionCompletion.completeExceptionally(future, e);
+            }
+            return future;
+        }
+
         if (client != null) {
             client.execute(() -> {
                 try {
@@ -3676,6 +3700,24 @@ public class Node {
         }
 
         return future;
+    }
+
+    private boolean requiresClientThreadExecution() {
+        return switch (type) {
+            case EVENT_CALL,
+                EVENT_FUNCTION,
+                SET_VARIABLE,
+                CHANGE_VARIABLE,
+                CONTROL_REPEAT,
+                CONTROL_FOREVER,
+                START_CHAIN,
+                RUN_PRESET,
+                CUSTOM_NODE,
+                TEMPLATE,
+                STOP_CHAIN,
+                STOP_ALL -> false;
+            default -> true;
+        };
     }
 
     ParameterHandlingResult preprocessAttachedParameter(EnumSet<ParameterUsage> usages, CompletableFuture<Void> future) {
@@ -3934,6 +3976,9 @@ public class Node {
         }
 
         Node snapshot = createRuntimeVariableSnapshot(runtimeVariable);
+        if (type == NodeType.LOOK) {
+            snapshot = createLookVariableSnapshot(snapshot, runtimeVariable);
+        }
         if (snapshot == null) {
             sendVariableError(tr("pathmind.error.variableNoValue", variableName.trim()), future);
             return null;
@@ -3953,11 +3998,101 @@ public class Node {
         return snapshot;
     }
 
+    private Node createLookVariableSnapshot(Node snapshot, ExecutionManager.RuntimeVariable runtimeVariable) {
+        if (snapshot == null || runtimeVariable == null || runtimeVariable.getType() != NodeType.PARAM_AMOUNT) {
+            return snapshot;
+        }
+        Map<String, String> values = runtimeVariable.getValues();
+        if (values == null || values.isEmpty()) {
+            return snapshot;
+        }
+        String source = values.get(LOOK_DIRECTION_SOURCE_KEY);
+        String axis = values.get(LOOK_DIRECTION_AXIS_KEY);
+        if (!LOOK_DIRECTION_SOURCE_VALUE.equals(source) || axis == null || axis.isEmpty()) {
+            return snapshot;
+        }
+
+        String amount = values.get("Amount");
+        if (amount == null || amount.isEmpty()) {
+            amount = values.get(normalizeParameterKey("Amount"));
+        }
+        if (amount == null || amount.isEmpty()) {
+            return snapshot;
+        }
+
+        Node rotationSnapshot = new Node(NodeType.PARAM_ROTATION, 0, 0);
+        rotationSnapshot.setSocketsHidden(true);
+        if ("Yaw".equalsIgnoreCase(axis)) {
+            rotationSnapshot.setParameterValueAndPropagate("Yaw", amount);
+            rotationSnapshot.setParameterValueAndPropagate("Pitch", "");
+        } else if ("Pitch".equalsIgnoreCase(axis)) {
+            rotationSnapshot.setParameterValueAndPropagate("Yaw", "");
+            rotationSnapshot.setParameterValueAndPropagate("Pitch", amount);
+        } else {
+            return snapshot;
+        }
+        return rotationSnapshot;
+    }
+
+    private Map<String, String> remapSingleAxisLookValues(Map<String, String> values, Node parameterNode) {
+        if (values == null || values.isEmpty() || parameterNode == null) {
+            return values;
+        }
+        String axis = null;
+        if (parameterNode.getType() == NodeType.SENSOR_LOOK_DIRECTION && parameterNode.isSensorLookSingleAxisMode()) {
+            axis = parameterNode.getSensorLookComponentKey();
+        } else {
+            String source = values.get(LOOK_DIRECTION_SOURCE_KEY);
+            if (LOOK_DIRECTION_SOURCE_VALUE.equals(source)) {
+                axis = values.get(LOOK_DIRECTION_AXIS_KEY);
+            }
+        }
+        if (axis == null || axis.isEmpty()) {
+            return values;
+        }
+
+        String amount = values.get("Amount");
+        if (amount == null || amount.isEmpty()) {
+            amount = values.get(normalizeParameterKey("Amount"));
+        }
+        if (amount == null || amount.isEmpty()) {
+            return values;
+        }
+
+        Map<String, String> remapped = new HashMap<>(values);
+        if ("Yaw".equalsIgnoreCase(axis)) {
+            remapped.put("Yaw", amount);
+            remapped.put(normalizeParameterKey("Yaw"), amount);
+            remapped.remove("Pitch");
+            remapped.remove(normalizeParameterKey("Pitch"));
+        } else if ("Pitch".equalsIgnoreCase(axis)) {
+            remapped.put("Pitch", amount);
+            remapped.put(normalizeParameterKey("Pitch"), amount);
+            remapped.remove("Yaw");
+            remapped.remove(normalizeParameterKey("Yaw"));
+        } else {
+            return values;
+        }
+        return remapped;
+    }
+
     private void sendVariableError(String message, CompletableFuture<Void> future) {
         NodeExecutionCompletion.failWithCurrentClient(this, future, message);
     }
 
     Optional<Vec3d> resolvePositionTarget(Node parameterNode, RuntimeParameterData data, CompletableFuture<Void> future) {
+        if (parameterNode == null) {
+            return Optional.empty();
+        }
+        if (parameterNode.getType() == NodeType.OPERATOR_BOOLEAN_OR) {
+            Optional<Vec3d> resolved = resolveNearestPositionTargetFromOrNode(parameterNode, future);
+            if (resolved.isPresent() && data != null) {
+                Vec3d vec = resolved.get();
+                data.targetVector = vec;
+                data.targetBlockPos = new BlockPos(MathHelper.floor(vec.x), MathHelper.floor(vec.y), MathHelper.floor(vec.z));
+            }
+            return resolved;
+        }
         if (parameterNode != null && parameterNode.getType() == NodeType.LIST_ITEM) {
             Node resolved = resolveListItemValueNode(parameterNode, future, false, data);
             if (resolved != null) {
@@ -4019,24 +4154,73 @@ public class Node {
         String yValue = getParameterString(parameterNode, "Y");
         String zValue = getParameterString(parameterNode, "Z");
         if (xValue != null && yValue != null && zValue != null) {
-            try {
-                int x = Integer.parseInt(xValue.trim());
-                int y = Integer.parseInt(yValue.trim());
-                int z = Integer.parseInt(zValue.trim());
-                BlockPos pos = new BlockPos(x, y, z);
-                if (data != null) {
-                    data.targetBlockPos = pos;
-                }
-                return Optional.of(Vec3d.ofCenter(pos));
-            } catch (NumberFormatException ignored) {
-                // fall through to empty optional
+            int x = parseNodeInt(parameterNode, "X", 0);
+            int y = parseNodeInt(parameterNode, "Y", 0);
+            int z = parseNodeInt(parameterNode, "Z", 0);
+            BlockPos pos = new BlockPos(x, y, z);
+            if (data != null) {
+                data.targetBlockPos = pos;
             }
+            return Optional.of(Vec3d.ofCenter(pos));
         }
 
         return Optional.empty();
     }
 
+    private Optional<Vec3d> resolveNearestPositionTargetFromOrNode(Node orNode, CompletableFuture<Void> future) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        Vec3d reference = client != null && client.player != null
+            ? EntityCompatibilityBridge.getPos(client.player)
+            : null;
+        if (reference == null && client != null && client.player != null) {
+            reference = Vec3d.ofCenter(client.player.getBlockPos());
+        }
+
+        Optional<Vec3d> firstResolved = Optional.empty();
+        Vec3d nearest = null;
+        double nearestDistanceSq = Double.MAX_VALUE;
+        List<Integer> slotIndices = orNode.getAttachedParameterSlotIndices();
+        Collections.sort(slotIndices);
+        for (Integer slotIndex : slotIndices) {
+            Node child = orNode.getAttachedParameter(slotIndex);
+            if (child == null) {
+                continue;
+            }
+            Optional<Vec3d> candidate = resolvePositionTarget(child, null, future);
+            if (candidate.isEmpty()) {
+                if (future != null && future.isDone()) {
+                    return Optional.empty();
+                }
+                continue;
+            }
+            if (firstResolved.isEmpty()) {
+                firstResolved = candidate;
+            }
+            if (reference == null) {
+                continue;
+            }
+            double distanceSq = candidate.get().squaredDistanceTo(reference);
+            if (nearest == null || distanceSq < nearestDistanceSq) {
+                nearest = candidate.get();
+                nearestDistanceSq = distanceSq;
+            }
+        }
+
+        if (nearest != null) {
+            return Optional.of(nearest);
+        }
+        return firstResolved;
+    }
+
     Optional<Vec3d> resolveDistanceBetweenTarget(Node parameterNode) {
+        if (parameterNode == null) {
+            return Optional.empty();
+        }
+        int slotIndex = parameterNode.getParentParameterSlotIndex();
+        if (slotIndex < 0) {
+            slotIndex = 0;
+        }
+        parameterNode = resolveSensorParameterNode(parameterNode, slotIndex);
         if (parameterNode == null) {
             return Optional.empty();
         }
@@ -4119,6 +4303,15 @@ public class Node {
             return Optional.of(pos);
         }
         return Optional.of(Vec3d.ofCenter(nearest.getBlockPos()));
+    }
+
+    boolean isDistanceBetweenSupportedTarget(Node parameterNode) {
+        return parameterNode != null
+            && (providesTrait(parameterNode, NodeValueTrait.ENTITY)
+                || providesTrait(parameterNode, NodeValueTrait.COORDINATE)
+                || providesTrait(parameterNode, NodeValueTrait.BLOCK)
+                || providesTrait(parameterNode, NodeValueTrait.ITEM)
+                || providesTrait(parameterNode, NodeValueTrait.PLAYER));
     }
 
     private void applyVectorToCoordinateParameters(Vec3d targetVec) {
@@ -4603,6 +4796,10 @@ public class Node {
         if (value == null || value.isEmpty()) {
             return defaultValue;
         }
+        Integer relativeCoordinate = resolveRelativeCoordinateValue(node, name, value);
+        if (relativeCoordinate != null) {
+            return relativeCoordinate;
+        }
         Double evaluated = evaluateNumericExpression(value);
         if (evaluated != null) {
             return (int) Math.round(evaluated);
@@ -4690,6 +4887,14 @@ public class Node {
         String value = getParameterString(node, name);
         if (value == null || value.isEmpty()) {
             return null;
+        }
+        Float relativeLook = resolveRelativeLookValue(node, name, value);
+        if (relativeLook != null) {
+            return relativeLook;
+        }
+        Double evaluated = evaluateNumericExpression(value);
+        if (evaluated != null) {
+            return evaluated.floatValue();
         }
         try {
             return Float.parseFloat(value.trim());
@@ -5093,27 +5298,48 @@ public class Node {
                 if (!client.world.isChunkLoaded(chunkX, chunkZ)) {
                     continue;
                 }
-                BlockPos.Mutable mutable = new BlockPos.Mutable();
+                WorldChunk chunk = client.world.getChunk(chunkX, chunkZ);
+                if (chunk == null || chunk.isEmpty()) {
+                    continue;
+                }
+                ChunkSection[] sections = chunk.getSectionArray();
+                if (sections == null || sections.length == 0) {
+                    continue;
+                }
                 int startX = chunkX << 4;
                 int startZ = chunkZ << 4;
-                for (int localX = 0; localX < 16; localX++) {
-                    for (int localZ = 0; localZ < 16; localZ++) {
+                int bottomSectionCoord = client.world.getBottomSectionCoord();
+                BlockPos.Mutable mutable = new BlockPos.Mutable();
+                for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+                    ChunkSection section = sections[sectionIndex];
+                    if (section == null || section.isEmpty()) {
+                        continue;
+                    }
+                    if (!section.hasAny(state -> !state.isAir() && matchesAnyBlock(selections, state))) {
+                        continue;
+                    }
+
+                    int sectionMinY = (bottomSectionCoord + sectionIndex) << 4;
+                    int yStart = Math.max(minY, sectionMinY);
+                    int yEnd = Math.min(maxY, sectionMinY + 15);
+                    if (yStart > yEnd) {
+                        continue;
+                    }
+
+                    for (int localX = 0; localX < 16; localX++) {
                         int worldX = startX + localX;
-                        int worldZ = startZ + localZ;
-                        double horizontalDistanceSq = playerPos.getSquaredDistance(worldX, playerPos.getY(), worldZ);
-                        if (horizontalDistanceSq > maxDistanceSq) {
-                            continue;
-                        }
-                        for (int y = minY; y <= maxY; y++) {
-                            mutable.set(worldX, y, worldZ);
-                            if (mutable.getSquaredDistance(playerPos) > maxDistanceSq) {
-                                continue;
-                            }
-                            BlockState state = client.world.getBlockState(mutable);
-                            if (state.isAir()) {
-                                continue;
-                            }
-                            if (matchesAnyBlock(selections, state)) {
+                        for (int localZ = 0; localZ < 16; localZ++) {
+                            int worldZ = startZ + localZ;
+                            for (int y = yStart; y <= yEnd; y++) {
+                                int localY = y - sectionMinY;
+                                BlockState state = section.getBlockState(localX, localY, localZ);
+                                if (state.isAir() || !matchesAnyBlock(selections, state)) {
+                                    continue;
+                                }
+                                mutable.set(worldX, y, worldZ);
+                                if (mutable.getSquaredDistance(playerPos) > maxDistanceSq) {
+                                    continue;
+                                }
                                 matches.add(mutable.toImmutable());
                                 if (resultLimit > 0 && matches.size() >= resultLimit) {
                                     matches.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(playerPos)));
@@ -5853,7 +6079,7 @@ public class Node {
         return node.resolveRuntimeVariablesInText(value);
     }
 
-    /** Returns the raw parameter value without resolving ~variable references (for error messages). */
+    /** Returns the raw parameter value without resolving $variable references (for error messages). */
     private static String getParameterStringRaw(Node node, String name) {
         if (node == null || name == null) {
             return null;
@@ -5968,7 +6194,7 @@ public class Node {
         if (rawValue == null) {
             return Optional.empty();
         }
-        String trimmedRaw = rawValue.trim();
+        String trimmedRaw = LegacyVariableSyntaxCompat.normalizeLegacyVariableSyntax(rawValue.trim());
         if (trimmedRaw.isEmpty()) {
             return Optional.empty();
         }
@@ -5983,7 +6209,7 @@ public class Node {
             return Optional.empty();
         }
 
-        String variableName = trimmedRaw.startsWith("~") ? trimmedRaw.substring(1).trim() : trimmedRaw;
+        String variableName = trimmedRaw.startsWith("$") ? trimmedRaw.substring(1).trim() : trimmedRaw;
         if (variableName.isEmpty()) {
             return Optional.empty();
         }
@@ -6062,6 +6288,56 @@ public class Node {
         }
         NumericExpressionParser parser = new NumericExpressionParser(value);
         return parser.parse();
+    }
+
+    private static Integer resolveRelativeCoordinateValue(Node node, String name, String value) {
+        if (!RelativeInputSupport.supportsRelativeCoordinate(node, name)
+            || !RelativeInputSupport.isRelativeExpression(value)) {
+            return null;
+        }
+        Double resolved = RelativeInputSupport.resolveRelativeExpression(value, getCurrentCoordinateAxisValue(name));
+        return resolved != null ? (int) Math.round(resolved) : null;
+    }
+
+    private static Float resolveRelativeLookValue(Node node, String name, String value) {
+        if (!RelativeInputSupport.supportsRelativeLook(node, name)
+            || !RelativeInputSupport.isRelativeExpression(value)) {
+            return null;
+        }
+        Double resolved = RelativeInputSupport.resolveRelativeExpression(value, getCurrentLookAxisValue(name));
+        return resolved != null ? resolved.floatValue() : null;
+    }
+
+    private static int getCurrentCoordinateAxisValue(String name) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) {
+            return 0;
+        }
+        BlockPos playerPos = client.player.getBlockPos();
+        if ("X".equalsIgnoreCase(name)) {
+            return playerPos.getX();
+        }
+        if ("Y".equalsIgnoreCase(name)) {
+            return playerPos.getY();
+        }
+        if ("Z".equalsIgnoreCase(name)) {
+            return playerPos.getZ();
+        }
+        return 0;
+    }
+
+    private static float getCurrentLookAxisValue(String name) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null) {
+            return 0.0F;
+        }
+        if ("Yaw".equalsIgnoreCase(name)) {
+            return client.player.getYaw();
+        }
+        if ("Pitch".equalsIgnoreCase(name)) {
+            return client.player.getPitch();
+        }
+        return 0.0F;
     }
 
     private static final class NumericExpressionParser {
@@ -6770,6 +7046,7 @@ public class Node {
             case SENSOR_KEY_PRESSED -> basicSensorEvaluator().evaluateKeyPressed();
             case SENSOR_IS_RENDERED -> visibilitySensorEvaluator().evaluateRendered();
             case SENSOR_IS_VISIBLE -> visibilitySensorEvaluator().evaluateVisible();
+            case SENSOR_FIND_TRADE -> villagerTradeSensorEvaluator().evaluateFindTrade();
             case SENSOR_VILLAGER_TRADE -> villagerTradeSensorEvaluator().evaluateVillagerTrade();
             case SENSOR_IN_STOCK -> villagerTradeSensorEvaluator().evaluateInStock();
             case SENSOR_CHAT_MESSAGE -> eventSensorEvaluator().evaluateChatMessage();
@@ -7098,9 +7375,7 @@ public class Node {
     void executeCommand(String command) {
         try {
             net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-            if (client != null && client.player != null) {
-                client.player.networkHandler.sendChatMessage(command);
-            }
+            ClientMessageSender.send(client, command);
         } catch (Exception e) {
             LOGGER.warn("Error executing command: {}", e.getMessage(), e);
         }

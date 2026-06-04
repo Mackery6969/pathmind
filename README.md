@@ -194,7 +194,7 @@ Queries Modrinth for the latest Architectury API version for each configured MC 
 
 | Component | Version |
 |-----------|---------|
-| Mod Version | `1.1.4` |
+| Mod Version | `1.1.5` |
 | Supported Minecraft Versions | `1.21 - 1.21.11` |
 | Fabric Loader | `0.17.3+` |
 | NeoForge | `21.0.166+` |
